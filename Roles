@@ -1,0 +1,12 @@
+roles:
+  APPLICATION_ADMIN:
+    description: "Admin access to the entire application"
+    permissions: ["ACCESS_ALL_SERVICES", "READ", "WRITE", "DELETE"]
+
+  SERVICE_ADMIN:
+    - service: "service1"
+      permissions: ["READ", "WRITE"]
+
+  SERVICE_USER:
+    - service: "service1"
+      permissions: ["READ"]
