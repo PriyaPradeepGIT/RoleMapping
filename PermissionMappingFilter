@@ -2,7 +2,11 @@ import org.springframework.web.server.ServerWebExchange;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
 import org.springframework.stereotype.Component;
+
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Component
 public class PermissionMappingFilter extends AbstractGatewayFilterFactory<PermissionMappingFilter.Config> {
@@ -18,10 +22,24 @@ public class PermissionMappingFilter extends AbstractGatewayFilterFactory<Permis
         return (exchange, chain) -> {
             String rolesHeader = exchange.getRequest().getHeaders().getFirst("X-User-Roles");
 
-            if (rolesHeader != null && rolesHeader.contains("APPLICATION_ADMIN")) {
-                List<String> permissions = permissionService.getPermissionsForRole("APPLICATION_ADMIN");
+            if (rolesHeader != null) {
+                // Split multiple roles by comma and trim any extra whitespace
+                String[] roles = rolesHeader.split(",");
+                Set<String> permissions = new HashSet<>();
+
+                // Iterate over roles and fetch permissions
+                for (String role : roles) {
+                    String trimmedRole = role.trim();
+                    List<String> rolePermissions = permissionService.getPermissionsForRole(trimmedRole);
+                    permissions.addAll(rolePermissions);
+                }
+
+                // Convert permissions to a comma-separated string and add to the header
+                String consolidatedPermissions = permissions.stream()
+                        .collect(Collectors.joining(","));
+                
                 exchange.getRequest().mutate()
-                        .header("X-User-Permissions", String.join(",", permissions))
+                        .header("X-User-Permissions", consolidatedPermissions)
                         .build();
             }
             
@@ -30,6 +48,6 @@ public class PermissionMappingFilter extends AbstractGatewayFilterFactory<Permis
     }
 
     public static class Config {
-        // Add configuration if needed
+        // Additional configuration if needed
     }
 }
