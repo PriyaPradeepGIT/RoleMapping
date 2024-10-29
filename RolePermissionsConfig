@@ -1,0 +1,22 @@
+@Component
+@ConfigurationProperties(prefix = "roles")
+public class RolePermissionsConfig {
+
+    private Map<String, Role> roles = new HashMap<>();
+
+    public Map<String, Role> getRoles() {
+        return roles;
+    }
+
+    public void setRoles(Map<String, Role> roles) {
+        this.roles = roles;
+    }
+
+    public static class Role {
+        private String description;
+        private List<String> permissions;
+        private String service;
+
+        // Getters and setters
+    }
+}
