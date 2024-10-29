@@ -1,0 +1,6 @@
+@GetMapping("/restricted-endpoint")
+@PreAuthorize("@permissionChecker.hasPermission(#permissionsHeader, 'WRITE')")
+public ResponseEntity<String> restrictedEndpoint(@RequestHeader("X-User-Permissions") String permissionsHeader) {
+    // Your endpoint logic here
+    return ResponseEntity.ok("Access granted.");
+}
