@@ -1,0 +1,43 @@
+import org.springframework.cloud.gateway.filter.GatewayFilterChain;
+import org.springframework.cloud.gateway.filter.GlobalFilter;
+import org.springframework.core.env.Environment;
+import org.springframework.http.HttpHeaders;
+import org.springframework.stereotype.Component;
+import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Mono;
+
+@Component
+public class RoleFilter implements GlobalFilter {
+
+    private final String allowedEnvironment;
+
+    public RoleFilter(Environment environment) {
+        this.allowedEnvironment = environment.getProperty("app.env"); // e.g., "dev", "stg", "prod"
+    }
+
+    @Override
+    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        // 1. Retrieve roles from request headers
+        HttpHeaders headers = exchange.getRequest().getHeaders();
+        String rolesHeader = headers.getFirst("X-App-Roles"); // roles in "role1_dev,role2_dev" format
+        if (rolesHeader == null) {
+            return Mono.error(new RuntimeException("Access denied: Roles not found"));
+        }
+
+        // 2. Filter roles based on the allowed environment
+        String[] roles = rolesHeader.split(",");
+        String mappedRoles = Arrays.stream(roles)
+                .filter(role -> role.contains("_" + allowedEnvironment))
+                .map(role -> role.replace("_" + allowedEnvironment, "")) // Remove the environment suffix
+                .collect(Collectors.joining(","));
+
+        if (mappedRoles.isEmpty()) {
+            return Mono.error(new RuntimeException("Access denied: No roles match the current environment"));
+        }
+
+        // 3. Add mapped roles to headers for downstream services
+        exchange.getRequest().mutate().header("X-App-Mapped-Roles", mappedRoles).build();
+
+        return chain.filter(exchange); // Proceed with the request
+    }
+}
