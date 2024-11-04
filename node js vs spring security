@@ -1,0 +1,85 @@
+To validate an Azure AD-issued access token for an SSO-enabled web application, you can validate it either in **Node.js** (if that’s your backend entry point) or in **Spring Boot** if it’s downstream from Node.js. The best place to validate depends on where you want initial authentication to happen and how your app is structured.
+
+### Steps for Token Validation in Node.js
+If Node.js is the entry point, you can validate the token here and forward requests to Spring Boot only if the token is valid.
+
+#### 1. **Use Microsoft Authentication Library (MSAL) or Passport.js**:
+   - Use the **`passport-azure-ad`** strategy (if you’re using Passport.js) or **`@azure/msal-node`** for validating the token.
+   - These libraries will simplify token validation against Azure AD and will handle the heavy lifting of verifying the token’s signature, issuer, and claims.
+
+#### 2. **Manual Token Validation (using JWT libraries)**:
+   - If you prefer to manually validate, use a JWT library like **`jsonwebtoken`** to decode and verify the token.
+   - Retrieve the public keys from Azure AD’s **OpenID Connect metadata document** (URL format: `https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys`).
+   - Validate the token’s claims, such as issuer, audience, expiration, and the signature using the public key.
+
+Here’s an example of token validation in Node.js:
+
+```javascript
+const jwt = require('jsonwebtoken');
+const axios = require('axios');
+let publicKeys;
+
+// Get Azure AD public keys once and cache them for validation
+async function getPublicKeys() {
+    if (!publicKeys) {
+        const response = await axios.get(`https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys`);
+        publicKeys = response.data.keys;
+    }
+    return publicKeys;
+}
+
+// Token validation function
+async function validateToken(token) {
+    const keys = await getPublicKeys();
+    const decodedHeader = jwt.decode(token, { complete: true }).header;
+    const signingKey = keys.find(key => key.kid === decodedHeader.kid);
+
+    if (!signingKey) {
+        throw new Error('Invalid signing key');
+    }
+
+    const publicKey = signingKey.x5c[0];
+    return jwt.verify(token, `-----BEGIN CERTIFICATE-----\n${publicKey}\n-----END CERTIFICATE-----`, {
+        algorithms: ['RS256'],
+        issuer: `https://login.microsoftonline.com/{tenant_id}/v2.0`,
+        audience: '{client_id}'
+    });
+}
+```
+
+### Why Validate in Node.js
+1. **Single Entry Point**: Validating the token at the Node.js entry point allows you to intercept invalid tokens immediately, preventing unnecessary requests to the Spring Boot application.
+2. **Centralized Security**: If all front-end requests are directed first to Node.js, it makes sense to have validation there to maintain security checks at the main entry.
+3. **Lightweight Forwarding**: Once the token is validated, you can pass the user claims (like user ID and roles) to Spring Boot in the request headers, allowing Spring Boot to focus only on business logic.
+
+### Validating in Spring Boot Instead
+If Spring Boot receives direct requests or if you want to delegate validation, you could validate the token in the Spring Boot application.
+
+1. **Spring Security with OAuth2**:
+   - Use Spring Boot’s OAuth2 resource server configuration to validate JWT tokens from Azure AD.
+   - Configure Spring Security with Azure AD’s issuer URI and audience.
+
+   Example configuration in `application.yml`:
+
+   ```yaml
+   spring:
+     security:
+       oauth2:
+         resourceserver:
+           jwt:
+             issuer-uri: https://login.microsoftonline.com/{tenant_id}/v2.0
+             audience: {client_id}
+   ```
+
+   With this setup, Spring Security automatically validates the token’s signature, issuer, and claims.
+
+2. **Fine-Grained Authorization**:
+   - Spring Boot allows you to use **`@PreAuthorize`** annotations for role-based access control based on claims in the token, which might simplify authorization logic at the service layer.
+
+### Summary: Choosing Between Node.js and Spring Boot for Token Validation
+- **Use Node.js** if it’s your main entry point, as this provides a centralized security check.
+- **Use Spring Boot** if:
+  - It’s the first point of entry for specific requests (and Node.js is more for API aggregation).
+  - You prefer Spring Security’s built-in features for validating and managing user claims and roles.
+
+In many setups, validating in **Node.js as the primary gate** is preferred, but you could also validate at both layers for added security.
