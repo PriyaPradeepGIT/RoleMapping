@@ -1,0 +1,7 @@
+public String toStringMasked() {
+        return "User{" +
+                "username='" + username + '\'' +
+                ", password='******'" +
+                ", creditCard='**** **** **** " + creditCard.substring(12) + '\'' +
+                '}';
+    }
