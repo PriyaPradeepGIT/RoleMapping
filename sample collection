@@ -1,0 +1,23 @@
+db.getCollection("ncpdp-generic-request").aggregate([
+    {
+        "$lookup": {
+            "from": "ncpdp-generic-response",
+            "localField": "metadata.transactionId",
+            "foreignField": "metadata.transactionId",
+            "as": "matchedResponses"
+        }
+    },
+    {
+        "$match": {
+            "matchedResponses": { "$ne": [] }
+        }
+    },
+    {
+        "$project": {
+            "transactionId": "$metadata.transactionId",
+            "claimNumber": "$matchedResponses.metadata.rxClaimNumber",
+            "source": { "$literal": "INTERNAL" },
+            "duration": { "$literal": "200ms" }
+        }
+    }
+]);
