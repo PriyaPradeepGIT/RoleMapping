@@ -1,0 +1,24 @@
+   public List<ClaimTransactionDemo> getAggregatedResults() {
+    	log.info("Inside getAggregatedResults method");
+        Aggregation aggregation = Aggregation.newAggregation(
+                Aggregation.lookup("ncpdp-generic-request", "metadata.transactionId", "metadata.transactionId", "request"),
+                Aggregation.lookup("ncpdp-generic-response", "metadata.transactionId", "metadata.transactionId", "response"),
+                Aggregation.project()
+                .and("response.metadata.rxClaimNumber").as("claimNumber")
+                .and("request.insuranceSegment.cardholderId").as("cardholderId")
+                .and("response.metadata.environment").as("platform")
+                .and("request.transactionHeaderSegment.binNumber").as("bin")
+                .and("request.transactionHeaderSegment.processorControlNumber").as("pcn")
+                .and("request.insuranceSegment.groupId").as("group")
+                .and("request.metadata.pharmacyId").as("pharmacyId")
+                .and("response.receiveTimestamp").as("timestamp")
+                .and("response.responseHeaderSegment.versionReleaseNumber").as("version")
+                .and("request.metadata.claimOriginationCode").as("origination")
+                .and("response.responseStatusSegment.transactionResponseStatus").as("status")
+                .and(Aggregation.spel("INTERNAL")).as("source")
+                .and(Aggregation.spel("200")).as("duration")
+);
+
+        AggregationResults<ClaimTransactionDemo> results = mongoTemplate.aggregate(aggregation, "ncpdp-generic-request", ClaimTransactionDemo.class);
+        return results.getMappedResults();
+    }
