@@ -1,0 +1,36 @@
+@Repository
+@Slf4j
+public class ClaimTxnRepository {
+
+    @Autowired
+    private MongoDatabase mongoDatabase;
+
+    public List<Document> getAggregatedResults() {
+        MongoCollection<Document> collection = mongoDatabase.getCollection("ncpdp_generic_response");
+        log.info("Inside getAggregatedResults method"+collection.countDocuments());
+
+        List<Bson> pipeline = Arrays.asList(
+                Aggregates.lookup("ncpdp-generic-request", "metadata.transactionId", "metadata.transactionId", "response"),
+                Aggregates.unwind("$response"),
+                Aggregates.lookup("ncpdp_generic_response", "metadata.transactionId", "metadata.transactionId", "request"),
+                Aggregates.unwind("$request"),
+                Aggregates.project(Projections.fields(
+                    Projections.computed("claimNumber", "$metadata.rxclaimNumber"),
+                    Projections.computed("cardholderId","$response.insuranceSegment.cardholderId"),
+                    Projections.computed("platform", "$metadata.environment"),
+                    Projections.computed("bin", "$response.transactionHeaderSegment.binNumber"),
+                    Projections.computed("pcn", "$response.transactionHeaderSegment.processorControlNumber"),
+                    Projections.computed("group", "$response.insuranceSegment.groupId"),
+                    Projections.computed("pharmacyId", "$response.metadata.pharmacyId"),
+                    Projections.computed("timestamp", "$request.receiveTimestamp"),
+                    Projections.computed("version", "$responseHeaderSegment.versionReleaseNumber"),
+                    Projections.computed("origination", "$metadata.claimOriginationCode"),
+                    Projections.computed("status", "$responseStatusSegment.transactionResponseStatus"),
+                    Projections.computed("source", "INTERNAL"),
+                    Projections.computed("duration", "200")
+                )),
+                Aggregates.limit(200)
+            );
+        return collection.aggregate(pipeline).into(new ArrayList<>());
+    }
+}
