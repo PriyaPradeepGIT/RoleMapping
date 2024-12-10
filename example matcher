@@ -1,0 +1,15 @@
+
+	    ExampleMatcher matcher = ExampleMatcher.matching()
+	        .withIgnoreCase()
+	        .withIgnoreNullValues()
+	        .withMatcher("claimNumber", ExampleMatcher.GenericPropertyMatchers.startsWith())
+	        .withMatcher("cardHolderId", ExampleMatcher.GenericPropertyMatchers.startsWith())
+	        .withMatcher("platform", ExampleMatcher.GenericPropertyMatchers.exact())
+	        .withMatcher("bin", ExampleMatcher.GenericPropertyMatchers.startsWith())
+	        .withMatcher("pcn", ExampleMatcher.GenericPropertyMatchers.startsWith())
+	        .withMatcher("group", ExampleMatcher.GenericPropertyMatchers.startsWith())
+	        .withMatcher("pharmacyId", ExampleMatcher.GenericPropertyMatchers.startsWith())
+	        .withMatcher("duration", ExampleMatcher.GenericPropertyMatchers.startsWith())
+	        .withMatcher("source", ExampleMatcher.GenericPropertyMatchers.exact())
+	        .withMatcher("origination", ExampleMatcher.GenericPropertyMatchers.exact())
+	        .withMatcher("status", ExampleMatcher.GenericPropertyMatchers.exact());
