@@ -1,0 +1,85 @@
+@Repository
+@Slf4j
+public class ClaimTxnRepository {
+
+    @Autowired
+    private MongoDatabase mongoDatabase;
+
+    public List<Document> searchByCriteria(ClaimTransaction claim) {
+        MongoCollection<Document> collection = mongoDatabase.getCollection("ncpdp_generic_response");
+        log.info("Inside searchByCriteria method");
+
+        // Initialize the pipeline
+        List<Bson> pipeline = new ArrayList<>();
+
+        // Add match conditions based on the search criteria
+        List<Bson> matchConditions = new ArrayList<>();
+
+        // Add conditions for each field with the specified matcher
+        if (claim.getClaimNumber() != null) {
+            matchConditions.add(Filters.regex("metadata.rxclaimNumber", "^" + claim.getClaimNumber()));
+        }
+        if (claim.getCardHolderId() != null) {
+            matchConditions.add(Filters.regex("response.insuranceSegment.cardholderId", "^" + claim.getCardHolderId()));
+        }
+        if (claim.getPlatform() != null) {
+            matchConditions.add(Filters.eq("metadata.environment", claim.getPlatform()));
+        }
+        if (claim.getBin() != null) {
+            matchConditions.add(Filters.regex("response.transactionHeaderSegment.binNumber", "^" + claim.getBin()));
+        }
+        if (claim.getPcn() != null) {
+            matchConditions.add(Filters.regex("response.transactionHeaderSegment.processorControlNumber", "^" + claim.getPcn()));
+        }
+        if (claim.getGroup() != null) {
+            matchConditions.add(Filters.regex("response.insuranceSegment.groupId", "^" + claim.getGroup()));
+        }
+        if (claim.getPharmacyId() != null) {
+            matchConditions.add(Filters.regex("response.metadata.pharmacyId", "^" + claim.getPharmacyId()));
+        }
+        if (claim.getDuration() != null) {
+            matchConditions.add(Filters.regex("response.metadata.duration", "^" + claim.getDuration()));
+        }
+        if (claim.getSource() != null) {
+            matchConditions.add(Filters.eq("response.metadata.source", claim.getSource()));
+        }
+        if (claim.getOrigination() != null) {
+            matchConditions.add(Filters.eq("metadata.claimOriginationCode", claim.getOrigination()));
+        }
+        if (claim.getStatus() != null) {
+            matchConditions.add(Filters.eq("responseStatusSegment.transactionResponseStatus", claim.getStatus()));
+        }
+
+        // Combine all match conditions using $and
+        if (!matchConditions.isEmpty()) {
+            pipeline.add(Aggregates.match(Filters.and(matchConditions)));
+        }
+
+        // Continue with the rest of the aggregation pipeline
+        pipeline.addAll(Arrays.asList(
+                Aggregates.lookup("ncpdp-generic-request", "metadata.transactionId", "metadata.transactionId", "response"),
+                Aggregates.unwind("$response"),
+                Aggregates.lookup("ncpdp_generic_response", "metadata.transactionId", "metadata.transactionId", "request"),
+                Aggregates.unwind("$request"),
+                Aggregates.project(Projections.fields(
+                        Projections.computed("claimNumber", "$metadata.rxclaimNumber"),
+                        Projections.computed("cardholderId", "$response.insuranceSegment.cardholderId"),
+                        Projections.computed("platform", "$metadata.environment"),
+                        Projections.computed("bin", "$response.transactionHeaderSegment.binNumber"),
+                        Projections.computed("pcn", "$response.transactionHeaderSegment.processorControlNumber"),
+                        Projections.computed("group", "$response.insuranceSegment.groupId"),
+                        Projections.computed("pharmacyId", "$response.metadata.pharmacyId"),
+                        Projections.computed("timestamp", "$request.receiveTimestamp"),
+                        Projections.computed("version", "$responseHeaderSegment.versionReleaseNumber"),
+                        Projections.computed("origination", "$metadata.claimOriginationCode"),
+                        Projections.computed("status", "$responseStatusSegment.transactionResponseStatus"),
+                        Projections.computed("source", "INTERNAL"),
+                        Projections.computed("duration", "200")
+                )),
+                Aggregates.limit(200)
+        ));
+
+        // Execute the pipeline
+        return collection.aggregate(pipeline).into(new ArrayList<>());
+    }
+}
