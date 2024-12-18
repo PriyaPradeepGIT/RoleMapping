@@ -1,0 +1,74 @@
+import java.net.URL;
+
+import com.nimbusds.jose.JWSVerifier;
+import com.nimbusds.jose.crypto.ECDSAVerifier;
+import com.nimbusds.jose.jwk.ECKey;
+import com.nimbusds.jose.jwk.JWK;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
+
+public class Jwts {
+
+    private static final String JWKS_URI = "https://authgateway3-dev.entiam.uhg.com/pf/JWKS";
+
+    /**
+     * Validates a JWT token using JWKS.
+     *
+     * @param token JWT token to validate.
+     * @return Parsed claims if valid.
+     * @throws Exception if the token is invalid or cannot be verified.
+     */
+    public static JWTClaimsSet validateToken(String token) throws Exception {
+        // Parse the signed JWT
+        SignedJWT signedJWT = SignedJWT.parse(token);
+
+        // Extract the "kid" from the token header
+        String kid = signedJWT.getHeader().getKeyID();
+        System.out.println("kid: " + kid);
+        if (kid == null) {
+            throw new IllegalArgumentException("Token is missing a Key ID (kid).");
+        }
+
+        // Fetch the JWK Set from the JWKS URI
+        JWKSet jwkSet = JWKSet.load(new URL(JWKS_URI));
+
+        // Find the matching JWK by "kid"
+        JWK jwk = jwkSet.getKeyByKeyId(kid);
+        System.out.println("JWK: " + jwk);
+        if (jwk == null || !(jwk instanceof ECKey)) {
+            throw new IllegalArgumentException("No matching key found for kid: " + kid);
+        }
+
+        // Convert the JWK to an RSA public key
+        ECKey ecKey = (ECKey) jwk;
+        JWSVerifier verifier = new ECDSAVerifier(ecKey.toECPublicKey());
+
+        // Validate the token signature
+        if (!signedJWT.verify(verifier)) {
+            throw new IllegalArgumentException("Invalid token signature.");
+        }
+
+        // Extract and validate the claims
+        JWTClaimsSet claims = signedJWT.getJWTClaimsSet();
+        if (claims.getExpirationTime().before(new java.util.Date())) {
+            throw new IllegalArgumentException("Token is expired.");
+        }
+
+        return claims; // Return parsed claims if valid
+    }
+
+    public static void main(String[] args) {
+    	String accessToken ="eyJhbGciOiJSUzI1NiIsImtpZCI6IkpzN0daM2hVc1BzSzhZYXQyM1l2VmwyUHU1QV9SUzI1NiIsInBpLmF0bSI6Ijhkdm4ifQ.eyJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGFkZHJlc3MgZW1haWwgcGhvbmUiLCJhdXRob3JpemF0aW9uX2RldGFpbHMiOltdLCJjbGllbnRfaWQiOiJSZWczRGV2X3J4YnJpZGciLCJhY3IiOiJSM19BQUwxX01TLUFELUtlcmJlcm9zIiwiYXVkIjoiUmVnM0Rldl9yeGJyaWRnIiwic3ViIjoicGFubmFoYSIsIm1zaWQiOiJwYW5uYWhhIiwiaXNzIjoiaHR0cHM6Ly9hdXRoZ2F0ZXdheTMtZGV2LmVudGlhbS51aGcuY29tIiwiZW1wbG95ZWVJRCI6IjAwMjE3MjU1OSIsImV4cCI6MTczNDUyNTQyM30.RGBlacttdq9sidKraWCJdwk9VXFQdreHVqFQCQJFGsxnvkrjapokagKC4NEoRga97bxSC15_MuGsR5sf6J_13khw7dUHxOlXTChIX731-fwiq8DUJ3pV64WfPOA0sCTGwzqRHnO74o1w002Mc5Sl0a8McSUl4IcC_ipQh9r_Fp97tSsyptXTVt-D520ZwQwDpc5D_Nb0RPQ7AaChC8Mo-AsX5awzoZQ_j5QfWqDxZNjuKOO3ZViYgDohEbGYVtDUl4nUqbchTr-UpJ1ROewlsE5W_OSTeezaKk_OntixDL-YuXivbqLZXi3D4VmZNNZqNp9IA_zcGn_gUwk2wnmzBg";
+    	
+    	String idToken ="eyJhbGciOiJFUzI1NiIsImtpZCI6Ikp3TlRRWlA0QUxLaTVwUGxDTUNRMWdETDE4VSJ9.eyJzdWIiOiJwYW5uYWhhIiwiYXVkIjoiUmVnM0Rldl9yeGJyaWRnIiwianRpIjoiSUdrUjV4TTJMaGx3SDB3bmVadVBieSIsImlzcyI6Imh0dHBzOi8vYXV0aGdhdGV3YXkzLWRldi5lbnRpYW0udWhnLmNvbSIsImlhdCI6MTczNDUyMzYyMSwiZXhwIjoxNzM0NTIzOTIxLCJhdXRoX3RpbWUiOjE3MzQ1MTk3MjQsImFjciI6IlIzX0FBTDFfTVMtQUQtS2VyYmVyb3NfT25seSIsIm1zYWRfZ3JvdXBzIjoiUnhCUklER19BZG1pbiIsImRpc3BsYXlOYW1lIjoiQW5uYSBIYXJpZGFzLCBQcml5YXRoYXJzaW5pIiwiZ2l2ZW5fbmFtZSI6IlByaXlhdGhhcnNpbmkiLCJmYW1pbHlfbmFtZSI6IkFubmEgSGFyaWRhcyIsImVtYWlsIjoicHJpeWF0aGFyc2luaV9hbm5hQG9wdHVtLmNvbSIsInVzZXJuYW1lIjoicGFubmFoYSIsInBpLnNyaSI6ImZEVTJ6UVI2TjhXWV9HOTZJa29ZeENfc1FpMC5Vak0uWXF1cyIsInNpZCI6ImZEVTJ6UVI2TjhXWV9HOTZJa29ZeENfc1FpMC5Vak0uWXF1cyJ9.Ib_7bJZL5F0eTbBJq-Y61xWR2NGffXTc9n3eu9s_XsxmAvg1o97_330tEhkJJXTJ8cKdmTnmIkTyzP41ifzsxA";
+        String token = "eyJhbGciOiJFUzI1NiIsImtpZCI6Ikp3TlRRWlA0QUxLaTVwUGxDTUNRMWdETDE4VSJ9.eyJzdWIiOiJwYW5uYWhhIiwiYXVkIjoiUmVnM0Rldl9yeGJyaWRnIiwianRpIjoiZVhZTzlWbXEwdzdUZ21neWVNNFBGeiIsImlzcyI6Imh0dHBzOi8vYXV0aGdhdGV3YXkzLWRldi5lbnRpYW0udWhnLmNvbSIsImlhdCI6MTczNDUxOTcyNCwiZXhwIjoxNzM0NTIwMDI0LCJhdXRoX3RpbWUiOjE3MzQ1MTk3MjQsImFjciI6IlIzX0FBTDFfTVMtQUQtS2VyYmVyb3NfT25seSIsIm1zYWRfZ3JvdXBzIjoiUnhCUklER19BZG1pbiIsImRpc3BsYXlOYW1lIjoiQW5uYSBIYXJpZGFzLCBQcml5YXRoYXJzaW5pIiwiZ2l2ZW5fbmFtZSI6IlByaXlhdGhhcnNpbmkiLCJmYW1pbHlfbmFtZSI6IkFubmEgSGFyaWRhcyIsImVtYWlsIjoicHJpeWF0aGFyc2luaV9hbm5hQG9wdHVtLmNvbSIsInVzZXJuYW1lIjoicGFubmFoYSIsInBpLnNyaSI6ImZEVTJ6UVI2TjhXWV9HOTZJa29ZeENfc1FpMC5Vak0uWXF1cyIsInNpZCI6ImZEVTJ6UVI2TjhXWV9HOTZJa29ZeENfc1FpMC5Vak0uWXF1cyJ9.6zUbPYdFDBPYpo7Yexqi847mjcQuBsemkAYuUY_BvwhAXshcksAeSY97y-E0yX-5ALYEn5ltVNjTiVpdkGmgxQ";
+        
+        try {
+            JWTClaimsSet claims = validateToken(idToken);
+            System.out.println("Token is valid. Claims: " + claims.toJSONObject());
+        } catch (Exception e) {
+            System.err.println("Token validation failed: " + e.getMessage());
+        }
+    }
+}
