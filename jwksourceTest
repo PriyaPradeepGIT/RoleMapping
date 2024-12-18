@@ -1,0 +1,146 @@
+package com.example.security.service;
+
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.jwk.source.RemoteJWKSet;
+import com.nimbusds.jose.proc.DefaultJWTProcessor;
+import com.nimbusds.jose.proc.SecurityContext;
+import com.nimbusds.jwt.JWTClaimsSet;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
+
+import java.net.URL;
+import java.util.Date;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+class JwtValidationServiceTest {
+
+    private JwtValidationService jwtValidationService;
+
+    @Mock
+    private JWKSource<SecurityContext> mockJwkSource;
+
+    @Mock
+    private DefaultJWTProcessor<SecurityContext> mockJwtProcessor;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        jwtValidationService = spy(new JwtValidationService() {
+            @Override
+            protected JWKSource<SecurityContext> getJwkSource(URL jwksUrl) {
+                return mockJwkSource;
+            }
+
+            @Override
+            protected DefaultJWTProcessor<SecurityContext> getJwtProcessor(JWKSource<SecurityContext> jwkSource) {
+                return mockJwtProcessor;
+            }
+        });
+    }
+
+    @Test
+    void testValidateToken_Success() throws Exception {
+        // Arrange
+        JWTClaimsSet validClaims = new JWTClaimsSet.Builder()
+                .issuer("https://your-issuer.com")
+                .expirationTime(new Date(System.currentTimeMillis() + 10000))
+                .build();
+
+        when(mockJwtProcessor.process(any(String.class), any())).thenReturn(validClaims);
+
+        // Act
+        boolean isValid = jwtValidationService.validateToken("valid-token");
+
+        // Assert
+        assertTrue(isValid);
+        verify(mockJwtProcessor, times(1)).process(any(String.class), any());
+    }
+
+    @Test
+    void testValidateToken_InvalidIssuer() throws Exception {
+        // Arrange
+        JWTClaimsSet invalidIssuerClaims = new JWTClaimsSet.Builder()
+                .issuer("https://invalid-issuer.com")
+                .expirationTime(new Date(System.currentTimeMillis() + 10000))
+                .build();
+
+        when(mockJwtProcessor.process(any(String.class), any())).thenReturn(invalidIssuerClaims);
+
+        // Act & Assert
+        Exception exception = assertThrows(RuntimeException.class, () ->
+                jwtValidationService.validateToken("invalid-issuer-token")
+        );
+
+        assertEquals("Invalid issuer", exception.getMessage());
+        verify(mockJwtProcessor, times(1)).process(any(String.class), any());
+    }
+
+    @Test
+    void testValidateToken_ExpiredToken() throws Exception {
+        // Arrange
+        JWTClaimsSet expiredClaims = new JWTClaimsSet.Builder()
+                .issuer("https://your-issuer.com")
+                .expirationTime(new Date(System.currentTimeMillis() - 10000))
+                .build();
+
+        when(mockJwtProcessor.process(any(String.class), any())).thenReturn(expiredClaims);
+
+        // Act & Assert
+        Exception exception = assertThrows(RuntimeException.class, () ->
+                jwtValidationService.validateToken("expired-token")
+        );
+
+        assertEquals("Token is expired", exception.getMessage());
+        verify(mockJwtProcessor, times(1)).process(any(String.class), any());
+    }
+
+    @Test
+    void testValidateToken_JwtProcessorThrowsException() throws Exception {
+        // Arrange
+        when(mockJwtProcessor.process(any(String.class), any())).thenThrow(new RuntimeException("JWT processing error"));
+
+        // Act & Assert
+        boolean isValid = jwtValidationService.validateToken("invalid-token");
+
+        assertFalse(isValid);
+        verify(mockJwtProcessor, times(1)).process(any(String.class), any());
+    }
+
+    @Test
+    void testValidateToken_NullClaimsSet() throws Exception {
+        // Arrange
+        when(mockJwtProcessor.process(any(String.class), any())).thenReturn(null);
+
+        // Act & Assert
+        boolean isValid = jwtValidationService.validateToken("null-claims-token");
+
+        assertFalse(isValid);
+        verify(mockJwtProcessor, times(1)).process(any(String.class), any());
+    }
+
+    @Test
+    void testGetJwkSource() throws Exception {
+        // Act
+        JWKSource<SecurityContext> jwkSource = jwtValidationService.getJwkSource(new URL("https://your-issuer.com/.well-known/jwks.json"));
+
+        // Assert
+        assertNotNull(jwkSource);
+    }
+
+    @Test
+    void testGetJwtProcessor() {
+        // Act
+        DefaultJWTProcessor<SecurityContext> jwtProcessor = jwtValidationService.getJwtProcessor(mockJwkSource);
+
+        // Assert
+        assertNotNull(jwtProcessor);
+        assertEquals(JWSAlgorithm.RS256, jwtProcessor.getJWSKeySelector().getExpectedJWSAlgorithms().get(0));
+    }
+}
