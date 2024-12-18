@@ -1,0 +1,84 @@
+package com.example.security.service;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureException;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+@Service
+public class JwtValidationService {
+
+    @Value("${jwt.secret}")
+    private String secretKey;
+
+    @Value("${jwt.issuer}")
+    private String issuer;
+
+    /**
+     * Validates the given JWT token.
+     *
+     * @param token The JWT token to validate.
+     * @return true if the token is valid, false otherwise.
+     */
+    public boolean validateToken(String token) {
+        try {
+            Claims claims = getClaimsFromToken(token);
+
+            // Check issuer to ensure the token is from a trusted source
+            if (!issuer.equals(claims.getIssuer())) {
+                return false;
+            }
+
+            // Check if the token is expired
+            if (claims.getExpiration().before(new java.util.Date())) {
+                return false;
+            }
+
+            return true;
+        } catch (ExpiredJwtException ex) {
+            System.err.println("Token expired: " + ex.getMessage());
+        } catch (SignatureException ex) {
+            System.err.println("Invalid token signature: " + ex.getMessage());
+        } catch (Exception ex) {
+            System.err.println("Token validation error: " + ex.getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * Extracts claims from the token.
+     *
+     * @param token The JWT token.
+     * @return Claims extracted from the token.
+     */
+    public Claims getClaimsFromToken(String token) {
+        return Jwts.parser()
+                .setSigningKey(secretKey)
+                .parseClaimsJws(token)
+                .getBody();
+    }
+
+    /**
+     * Extracts the username from the JWT token.
+     *
+     * @param token The JWT token.
+     * @return The username.
+     */
+    public String getUsernameFromToken(String token) {
+        Claims claims = getClaimsFromToken(token);
+        return claims.getSubject();
+    }
+
+    /**
+     * Extracts roles from the JWT token.
+     *
+     * @param token The JWT token.
+     * @return Roles as a list of strings.
+     */
+    public java.util.List<String> getRolesFromToken(String token) {
+        Claims claims = getClaimsFromToken(token);
+        return claims.get("roles", java.util.List.class);
+    }
+}
