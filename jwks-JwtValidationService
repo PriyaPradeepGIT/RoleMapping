@@ -1,0 +1,50 @@
+package com.example.security.service;
+
+import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.jwk.source.RemoteJWKSet;
+import com.nimbusds.jose.proc.DefaultJWTProcessor;
+import com.nimbusds.jose.proc.JWTClaimsSetVerifier;
+import com.nimbusds.jose.proc.SecurityContext;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
+
+import java.net.URL;
+
+public class JwtValidationService {
+
+    private final String jwksUrl = "https://your-issuer.com/.well-known/jwks.json";
+
+    public boolean validateToken(String token) {
+        try {
+            // Set up JWKS source
+            JWKSource<SecurityContext> jwkSource = new RemoteJWKSet<>(new URL(jwksUrl));
+
+            // JWT processor with the JWKS source
+            DefaultJWTProcessor<SecurityContext> jwtProcessor = new DefaultJWTProcessor<>();
+            jwtProcessor.setJWSKeySelector((header, context) -> jwkSource.get(header, context));
+            
+            // Parse and process the token
+            JWTClaimsSet claimsSet = jwtProcessor.process(token, null);
+
+            // Perform additional validation if needed
+            validateClaims(claimsSet);
+
+            return true;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    private void validateClaims(JWTClaimsSet claimsSet) {
+        // Example claim validation: Check issuer
+        if (!"https://your-issuer.com".equals(claimsSet.getIssuer())) {
+            throw new RuntimeException("Invalid issuer");
+        }
+
+        // Check expiration
+        if (claimsSet.getExpirationTime().before(new Date())) {
+            throw new RuntimeException("Token is expired");
+        }
+    }
+}
