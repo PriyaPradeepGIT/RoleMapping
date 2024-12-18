@@ -1,0 +1,72 @@
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.JWSVerifier;
+import com.nimbusds.jose.crypto.RSASSAVerifier;
+import com.nimbusds.jose.jwk.JWK;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.RSAKey;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
+
+import java.io.IOException;
+import java.net.URL;
+import java.text.ParseException;
+
+public class JwksTokenValidator {
+
+    private static final String JWKS_URI = "https://auth.example.com/.well-known/jwks.json";
+
+    /**
+     * Validates a JWT token using JWKS.
+     *
+     * @param token JWT token to validate.
+     * @return Parsed claims if valid.
+     * @throws Exception if the token is invalid or cannot be verified.
+     */
+    public static JWTClaimsSet validateToken(String token) throws Exception {
+        // Parse the signed JWT
+        SignedJWT signedJWT = SignedJWT.parse(token);
+
+        // Extract the "kid" from the token header
+        String kid = signedJWT.getHeader().getKeyID();
+        if (kid == null) {
+            throw new IllegalArgumentException("Token is missing a Key ID (kid).");
+        }
+
+        // Fetch the JWK Set from the JWKS URI
+        JWKSet jwkSet = JWKSet.load(new URL(JWKS_URI));
+
+        // Find the matching JWK by "kid"
+        JWK jwk = jwkSet.getKeyByKeyId(kid);
+        if (jwk == null || !(jwk instanceof RSAKey)) {
+            throw new IllegalArgumentException("No matching key found for kid: " + kid);
+        }
+
+        // Convert the JWK to an RSA public key
+        RSAKey rsaKey = (RSAKey) jwk;
+        JWSVerifier verifier = new RSASSAVerifier(rsaKey.toRSAPublicKey());
+
+        // Validate the token signature
+        if (!signedJWT.verify(verifier)) {
+            throw new IllegalArgumentException("Invalid token signature.");
+        }
+
+        // Extract and validate the claims
+        JWTClaimsSet claims = signedJWT.getJWTClaimsSet();
+        if (claims.getExpirationTime().before(new java.util.Date())) {
+            throw new IllegalArgumentException("Token is expired.");
+        }
+
+        return claims; // Return parsed claims if valid
+    }
+
+    public static void main(String[] args) {
+        String token = "<YOUR_JWT_TOKEN>";
+        try {
+            JWTClaimsSet claims = validateToken(token);
+            System.out.println("Token is valid. Claims: " + claims.toJSONObject());
+        } catch (Exception e) {
+            System.err.println("Token validation failed: " + e.getMessage());
+        }
+    }
+}
