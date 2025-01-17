@@ -1,0 +1,118 @@
+
+
+
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import com.nimbusds.jose.crypto.ECDSAVerifier;
+import com.nimbusds.jose.jwk.ECKey;
+import com.nimbusds.jose.jwk.JWK;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
+import com.optum.bff.api.gateway.exception.InvalidTokenException;
+
+import lombok.extern.log4j.Log4j2;
+
+@Service
+@Log4j2
+public class TokenValidationService {
+
+    @Value("${jwks.uri}")
+    private String jwksUri;
+
+    public boolean validateToken(String token, String userName, String roles)throws InvalidTokenException {
+        try {
+            SignedJWT signedJWT = SignedJWT.parse(token);
+            String kid = signedJWT.getHeader().getKeyID();
+           
+            JWKSet jwkSet = JWKSet.load(new URL(jwksUri));
+            JWK jwk = jwkSet.getKeyByKeyId(kid);
+
+            if (!(jwk instanceof ECKey)) {
+            	log.error("Invalid key type found for id: {}", kid);
+                throw new InvalidTokenException("No matching key found for id:"+ kid);
+              
+            }
+
+            if (!verifyTokenSignature(signedJWT, jwk)) {
+                return false;
+            }
+
+            JWTClaimsSet claimsSet = signedJWT.getJWTClaimsSet();
+
+            return validateClaims(claimsSet, userName, roles);
+        }
+        catch (Exception e) {
+            log.error("Invalid token details: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean verifyTokenSignature(SignedJWT signedJWT, JWK jwk) throws Exception {
+        ECDSAVerifier verifier = new ECDSAVerifier(jwk.toECKey());
+        if (!signedJWT.verify(verifier)) {
+            log.warn("Token verification failed");
+            throw new InvalidTokenException("Token verification failed");
+        }
+        log.info("Token verification successful");
+        return true;
+    }
+
+  
+
+    private boolean validateClaims(JWTClaimsSet claimsSet, String userName, String roles) {
+        Map<String, Object> claims = claimsSet.getClaims();
+        if (claims != null) {
+            String tokenUserName = (String) claims.get("username");
+            Object tokenRoles = claims.get("msad_groups");  
+
+            boolean rolesMatch = compareRoles(tokenRoles, roles);
+
+            if (!userName.equals(tokenUserName) || !rolesMatch) {            	           	
+                log.warn("Token Validation failed for username and roles");
+                return false;
+               // return true;
+            }
+            log.info("Token Validation successful for username and roles");
+        }
+        return true;
+    }
+
+    private boolean compareRoles(Object tokenRoles, String roles) {
+        if (tokenRoles instanceof String) {
+            return roles.trim().equals(tokenRoles.toString().trim());
+        } else if (tokenRoles instanceof ArrayList) {
+            ArrayList<?> rolesArray = (ArrayList<?>) tokenRoles;
+            Set<String> tokenRolesSet = new HashSet<>();
+            for (Object role : rolesArray) {
+                if (role instanceof String) {
+                    tokenRolesSet.add(role.toString().trim());
+                }
+            }
+            String[] userRoles = roles.split(",");   
+			for (int i = 0; i < userRoles.length; i++) {
+				userRoles[i] = userRoles[i].trim();
+			}
+            return compareRolesSet(tokenRolesSet, userRoles);
+        } else {
+            log.error("Unsupported type for roles: {}", tokenRoles.getClass().getName());
+            return false;
+        }
+    }
+
+    private boolean compareRolesSet(Set<String> tokenRoles, String[] roles) {
+    	log.info("Token roles{}",tokenRoles.toString());
+        Set<String> rolesSet = new HashSet<>(Arrays.asList(roles));
+        log.info("Roles{}",rolesSet.toString());
+        return tokenRoles.equals(rolesSet);
+    }
+    }
+
