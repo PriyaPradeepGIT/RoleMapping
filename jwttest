@@ -1,0 +1,43 @@
+@Test
+public void testValidateToken_Positive() throws Exception {
+    // Input data
+    String token = "mockToken";
+    String userName = "testUser";
+    String roles = "ROLE_USER";
+
+    // Mock SignedJWT
+    when(SignedJWT.parse(token)).thenReturn(signedJWT);
+
+    // Mock JWT Header
+    JWSHeader jwsHeader = mock(JWSHeader.class);
+    when(signedJWT.getHeader()).thenReturn(jwsHeader);
+    when(jwsHeader.getKeyID()).thenReturn("keyId1");
+
+    // Mock JWKSet and JWK
+    when(JWKSet.load(any(URL.class))).thenReturn(jwkSet);
+    when(jwkSet.getKeyByKeyId("keyId1")).thenReturn(ecKey);
+    when(ecKey.toECKey()).thenReturn(ecKey);
+
+    // Mock ECDSAVerifier
+    ECDSAVerifier verifier = mock(ECDSAVerifier.class);
+    doNothing().when(verifier).verify(any());
+    when(signedJWT.verify(any(ECDSAVerifier.class))).thenReturn(true);
+
+    // Mock JWT Claims
+    JWTClaimsSet claimsSet = new JWTClaimsSet.Builder()
+            .claim("username", userName)
+            .claim("msad_groups", roles)
+            .build();
+    when(signedJWT.getJWTClaimsSet()).thenReturn(claimsSet);
+
+    // Call the method and validate the result
+    boolean result = tokenValidationService.validateToken(token, userName, roles);
+
+    // Assertions
+    assertTrue(result);
+    verify(signedJWT).getHeader();
+    verify(jwsHeader).getKeyID();
+    verify(jwkSet).getKeyByKeyId("keyId1");
+    verify(signedJWT).getJWTClaimsSet();
+    verify(signedJWT).verify(any(ECDSAVerifier.class));
+}
