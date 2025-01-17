@@ -1,0 +1,123 @@
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+import java.net.URL;
+import java.text.ParseException;
+import java.util.*;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.beans.factory.annotation.Value;
+
+import com.nimbusds.jose.JOSEException;
+import com.nimbusds.jose.crypto.ECDSAVerifier;
+import com.nimbusds.jose.jwk.ECKey;
+import com.nimbusds.jose.jwk.JWK;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
+import com.optum.bff.api.gateway.exception.InvalidTokenException;
+
+class TokenValidationServiceTest {
+
+    @InjectMocks
+    private TokenValidationService tokenValidationService;
+
+    @Mock
+    private JWKSet jwkSet;
+
+    @Mock
+    private ECKey ecKey;
+
+    @Mock
+    private SignedJWT signedJWT;
+
+    @Value("${jwks.uri}")
+    private String jwksUri = "http://mock-jwks-uri";
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    void testValidateToken_Positive() throws Exception {
+        String token = "mockToken";
+        String userName = "testUser";
+        String roles = "ROLE_USER";
+
+        when(SignedJWT.parse(token)).thenReturn(signedJWT);
+        when(signedJWT.getHeader().getKeyID()).thenReturn("keyId1");
+        when(JWKSet.load(new URL(jwksUri))).thenReturn(jwkSet);
+        when(jwkSet.getKeyByKeyId("keyId1")).thenReturn(ecKey);
+        when(ecKey.toECKey()).thenReturn(ecKey);
+
+        ECDSAVerifier verifier = mock(ECDSAVerifier.class);
+        doNothing().when(verifier).verify(any());
+        when(signedJWT.verify(any(ECDSAVerifier.class))).thenReturn(true);
+
+        JWTClaimsSet claimsSet = new JWTClaimsSet.Builder().claim("username", userName).claim("msad_groups", roles).build();
+        when(signedJWT.getJWTClaimsSet()).thenReturn(claimsSet);
+
+        assertTrue(tokenValidationService.validateToken(token, userName, roles));
+    }
+
+    @Test
+    void testValidateToken_InvalidKey() throws Exception {
+        String token = "mockToken";
+        when(SignedJWT.parse(token)).thenReturn(signedJWT);
+        when(signedJWT.getHeader().getKeyID()).thenReturn("invalidKeyId");
+        when(JWKSet.load(new URL(jwksUri))).thenReturn(jwkSet);
+        when(jwkSet.getKeyByKeyId("invalidKeyId")).thenReturn(null);
+
+        InvalidTokenException exception = assertThrows(InvalidTokenException.class,
+                () -> tokenValidationService.validateToken(token, "testUser", "ROLE_USER"));
+
+        assertEquals("No matching key found for id:invalidKeyId", exception.getMessage());
+    }
+
+    @Test
+    void testValidateToken_InvalidSignature() throws Exception {
+        String token = "mockToken";
+        when(SignedJWT.parse(token)).thenReturn(signedJWT);
+        when(signedJWT.getHeader().getKeyID()).thenReturn("keyId1");
+        when(JWKSet.load(new URL(jwksUri))).thenReturn(jwkSet);
+        when(jwkSet.getKeyByKeyId("keyId1")).thenReturn(ecKey);
+        when(ecKey.toECKey()).thenReturn(ecKey);
+
+        when(signedJWT.verify(any(ECDSAVerifier.class))).thenReturn(false);
+
+        assertFalse(tokenValidationService.validateToken(token, "testUser", "ROLE_USER"));
+    }
+
+    @Test
+    void testValidateToken_InvalidClaims() throws Exception {
+        String token = "mockToken";
+        String userName = "testUser";
+        String roles = "ROLE_USER";
+
+        when(SignedJWT.parse(token)).thenReturn(signedJWT);
+        when(signedJWT.getHeader().getKeyID()).thenReturn("keyId1");
+        when(JWKSet.load(new URL(jwksUri))).thenReturn(jwkSet);
+        when(jwkSet.getKeyByKeyId("keyId1")).thenReturn(ecKey);
+        when(ecKey.toECKey()).thenReturn(ecKey);
+        when(signedJWT.verify(any(ECDSAVerifier.class))).thenReturn(true);
+
+        JWTClaimsSet claimsSet = new JWTClaimsSet.Builder().claim("username", "wrongUser").claim("msad_groups", "WRONG_ROLE")
+                .build();
+        when(signedJWT.getJWTClaimsSet()).thenReturn(claimsSet);
+
+        assertFalse(tokenValidationService.validateToken(token, userName, roles));
+    }
+
+    @Test
+    void testValidateToken_Exception() throws Exception {
+        String token = "mockToken";
+        when(SignedJWT.parse(token)).thenThrow(new ParseException("Invalid token", 0));
+
+        assertFalse(tokenValidationService.validateToken(token, "testUser", "ROLE_USER"));
+    }
+}
