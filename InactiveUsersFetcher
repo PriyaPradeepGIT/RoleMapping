@@ -1,0 +1,30 @@
+import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.MongoClients;
+import com.mongodb.client.model.Filters;
+import org.bson.Document;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.List;
+
+public class InactiveUsersFetcher {
+
+    public static void main(String[] args) {
+        try (var mongoClient = MongoClients.create("mongodb://localhost:27017")) { // Adjust connection string
+            MongoDatabase database = mongoClient.getDatabase("your_database");
+            MongoCollection<Document> collection = database.getCollection("user_login_events");
+
+            // Get the threshold date (90 days ago in America/Chicago timezone)
+            LocalDateTime ninetyDaysAgo = LocalDateTime.now(ZoneId.of("America/Chicago")).minusDays(90);
+            Instant ninetyDaysAgoInstant = ninetyDaysAgo.atZone(ZoneId.of("America/Chicago")).toInstant();
+
+            // Query MongoDB
+            List<Document> inactiveUsers = collection.find(Filters.lt("loginDate", ninetyDaysAgoInstant)).into(new ArrayList<>());
+
+            // Print results
+            inactiveUsers.forEach(System.out::println);
+        }
+    }
+}
