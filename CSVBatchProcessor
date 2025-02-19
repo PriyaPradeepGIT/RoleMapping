@@ -1,50 +1,46 @@
+package com.optum.user.account.batch;
+
 import java.io.FileWriter;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
+import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.JobFactory;
-import org.springframework.batch.core.configuration.StepRegistry;
-import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
+import org.springframework.batch.core.configuration.annotation.BatchConfiguration;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.core.step.tasklet.Tasklet;
 import org.springframework.batch.repeat.RepeatStatus;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.batch.BatchProperties.Job;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import com.optum.user.account.repository.InactiveUserRepository;
 
-
-
 @Configuration
-@EnableBatchProcessing
+@BatchConfiguration
 public class CSVBatchProcessor {
 
-    @Autowired
-    private JobFactory jobBuilderFactory;
+    private final InactiveUserRepository inactiveUserRepository;
 
-    private StepRegistry stepBuilderFactory;
-
-    @Autowired
-    private InactiveUserRepository inactiveUserRepository;
+    public CSVBatchProcessor(InactiveUserRepository inactiveUserRepository) {
+        this.inactiveUserRepository = inactiveUserRepository;
+    }
 
     @Bean
-    public Job exportInactiveAccountsJob(JobRepository jobRepository , Step exportInactiveAccounts) {
-        return new JobBuilder("exportInactiveAccountsJob",jobRepository)               
+    public Job exportInactiveAccountsJob(JobRepository jobRepository, Step exportInactiveAccountsStep) {
+        return new JobBuilder("exportInactiveAccountsJob", jobRepository)
                 .start(exportInactiveAccountsStep)
                 .build();
     }
 
     @Bean
-    public Step exportInactiveAccountsStep() {
-        return  new StepBuilder("exportInactiveAccountsStep",jobRepository)
-                  .tasklet(exportInactiveAccountsTasklet)
+    public Step exportInactiveAccountsStep(JobRepository jobRepository, PlatformTransactionManager transactionManager) {
+        return new StepBuilder("exportInactiveAccountsStep", jobRepository)
+                .tasklet(exportInactiveAccountsTasklet(), transactionManager)
                 .build();
     }
 
@@ -52,18 +48,19 @@ public class CSVBatchProcessor {
     public Tasklet exportInactiveAccountsTasklet() {
         return (contribution, chunkContext) -> {
             List<String> inactiveAccounts = inactiveUserRepository.findInactiveUserIds();
-            String fileName = "AppID.EnvID.ParserType.InactiveAccounts" + LocalDate.now().format(DateTimeFormatter.ofPattern("MMddyyyy")) + ".csv";
+            String fileName = "AppID.EnvID.ParserType.InactiveAccounts_" + LocalDate.now().format(DateTimeFormatter.ofPattern("MMddyyyy")) + ".csv";
+            
             try (FileWriter writer = new FileWriter(fileName)) {
-                writer.append("LastName,FirstName,UniqueIdentifier,RequestType,RoleName,UserId,AccountType");
+                writer.append("LastName,FirstName,UniqueIdentifier,RequestType,RoleName,UserId,AccountType\n");
                 for (String userId : inactiveAccounts) {
-                	writer.append(",,,");
-                    writer.append("remove").append(",")
-                            .append(userId).append(",")
-                          .append("\n");
+                    writer.append(",,,remove,,")
+                          .append(userId)
+                          .append(",\n");
                 }
             } catch (IOException e) {
-                e.printStackTrace();
+                e.printStackTrace(); // Consider using a logger instead
             }
+            
             return RepeatStatus.FINISHED;
         };
     }
