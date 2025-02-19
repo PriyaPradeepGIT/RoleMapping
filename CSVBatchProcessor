@@ -1,0 +1,70 @@
+import java.io.FileWriter;
+import java.io.IOException;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.JobFactory;
+import org.springframework.batch.core.configuration.StepRegistry;
+import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
+import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.batch.core.step.tasklet.Tasklet;
+import org.springframework.batch.repeat.RepeatStatus;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.batch.BatchProperties.Job;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import com.optum.user.account.repository.InactiveUserRepository;
+
+
+
+@Configuration
+@EnableBatchProcessing
+public class CSVBatchProcessor {
+
+    @Autowired
+    private JobFactory jobBuilderFactory;
+
+    private StepRegistry stepBuilderFactory;
+
+    @Autowired
+    private InactiveUserRepository inactiveUserRepository;
+
+    @Bean
+    public Job exportInactiveAccountsJob(JobRepository jobRepository , Step exportInactiveAccounts) {
+        return new JobBuilder("exportInactiveAccountsJob",jobRepository)               
+                .start(exportInactiveAccountsStep)
+                .build();
+    }
+
+    @Bean
+    public Step exportInactiveAccountsStep() {
+        return  new StepBuilder("exportInactiveAccountsStep",jobRepository)
+                  .tasklet(exportInactiveAccountsTasklet)
+                .build();
+    }
+
+    @Bean
+    public Tasklet exportInactiveAccountsTasklet() {
+        return (contribution, chunkContext) -> {
+            List<String> inactiveAccounts = inactiveUserRepository.findInactiveUserIds();
+            String fileName = "AppID.EnvID.ParserType.InactiveAccounts" + LocalDate.now().format(DateTimeFormatter.ofPattern("MMddyyyy")) + ".csv";
+            try (FileWriter writer = new FileWriter(fileName)) {
+                writer.append("LastName,FirstName,UniqueIdentifier,RequestType,RoleName,UserId,AccountType");
+                for (String userId : inactiveAccounts) {
+                	writer.append(",,,");
+                    writer.append("remove").append(",")
+                            .append(userId).append(",")
+                          .append("\n");
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            return RepeatStatus.FINISHED;
+        };
+    }
+}
