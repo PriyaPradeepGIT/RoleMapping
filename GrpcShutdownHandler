@@ -1,0 +1,31 @@
+import io.grpc.Server;
+import jakarta.annotation.PreDestroy;
+import org.springframework.stereotype.Component;
+
+@Component
+public class GrpcShutdownHandler {
+
+    private final Server grpcServer;
+
+    public GrpcShutdownHandler(Server grpcServer) {
+        this.grpcServer = grpcServer;
+    }
+
+    @PreDestroy
+    public void onShutdown() {
+        System.out.println("Shutting down gRPC server gracefully...");
+        if (grpcServer != null) {
+            grpcServer.shutdown(); // Initiates a graceful shutdown
+            try {
+                if (!grpcServer.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                    System.out.println("Forcing gRPC server shutdown...");
+                    grpcServer.shutdownNow(); // Force shutdown if it takes too long
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                grpcServer.shutdownNow();
+            }
+        }
+        System.out.println("gRPC server shutdown complete.");
+    }
+}
