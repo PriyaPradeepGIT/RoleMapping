@@ -1,0 +1,275 @@
+package com.optum.pbmcore.claim.service.receive;
+
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import javax.annotation.PostConstruct;
+
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+
+import com.optum.pbmcore.claim.egress.grpc.DisconnectNotification;
+import com.optum.pbmcore.claim.egress.grpc.DisconnectResponse;
+import com.optum.pbmcore.claim.egress.grpc.ExternalPayorServiceGrpc;
+import com.optum.pbmcore.claim.egress.request.EgressRequest;
+import com.optum.pbmcore.claim.egress.request.NcpdpRequest;
+import com.optum.pbmcore.claim.egress.response.EgressResponse;
+import com.optum.pbmcore.claim.logging.domain.TransactionLogRequest;
+import com.optum.pbmcore.claim.logging.domain.TransactionLogSummary;
+import com.optum.pbmcore.claim.logging.service.LogTransaction;
+import com.optum.pbmcore.claim.logging.service.TransactionLogService;
+import com.optum.pbmcore.claim.mapper.DomainToComposerRequestMapper;
+import com.optum.pbmcore.claim.mapper.EgressToDomainRequestMapper;
+import com.optum.pbmcore.claim.mapper.EgressToTransactionLogMapper;
+import com.optum.pbmcore.claim.model.RequestWrapper;
+import com.optum.pbmcore.claim.model.ResponseWrapper;
+import com.optum.pbmcore.claim.model.TransactionId;
+import com.optum.pbmcore.claim.service.RequestService;
+import com.optum.pbmcore.claim.service.ResponseService;
+import com.optum.pbmcore.claim.service.persist.DataPersistenceMessageService;
+import com.optum.pbmcore.claim.service.transaction.TransactionIdGenerator;
+import com.optum.pbmcore.claim.tcp.service.ErrorResponseProvider;
+import com.optum.pbmcore.claim.tcp.service.SequenceNumber;
+import com.optum.pbmcore.claim.util.ProxyStreamObserver;
+import com.optum.pbmcore.domain.model.request.NcpdpGenericTransaction;
+import com.optum.pbmcore.model.InFlightTransactionResponse;
+import com.optum.pbmcore.model.TransactionStatus;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import io.grpc.stub.StreamObserver;
+import lombok.extern.log4j.Log4j2;
+import net.devh.boot.grpc.server.service.GrpcService;
+
+@Log4j2
+@GrpcService
+public class ExternalPayorServiceImpl extends ExternalPayorServiceGrpc.ExternalPayorServiceImplBase {
+
+    private final DataPersistenceMessageService persistenceService;
+   
+   // private final RequestCounter requestCounter = new RequestCounter();
+    
+    private final ReentrantLock lock = new ReentrantLock();
+    private final Condition condition = lock.newCondition();
+    private final AtomicBoolean isDraining = new AtomicBoolean(false);
+    private final AtomicInteger requestCount = new AtomicInteger(0);
+
+    @Autowired
+    RequestService requestService;
+    
+    @Autowired
+    ShutdownHandler shutdownHandler ;
+
+    @Autowired
+    ResponseService responseService;
+
+    @Autowired
+    EgressToDomainRequestMapper egressToDomainMapper;
+
+    @Autowired
+    DomainToComposerRequestMapper domainToComposerMapper;
+
+    @Autowired
+    TransactionIdGenerator transactionIdGenerator;
+
+    @Autowired
+    SequenceNumber sequenceNumberGenerator;
+
+    @Autowired
+    TransactionLogService transactionLogService;
+
+    @Autowired
+    ErrorResponseProvider errorResponseProvider;
+
+    @Autowired
+    public ExternalPayorServiceImpl(final DataPersistenceMessageService persistenceService) {
+        this.persistenceService = Objects.requireNonNull(persistenceService, "The 'persistenceService' argument must not be null.");
+        // Registering shutdown hook
+       
+        Runtime.getRuntime().addShutdownHook(new Thread(this::initiateShutdown));
+    }   
+        
+        
+       
+            
+       
+
+    @Override
+    public StreamObserver<EgressRequest> processRequest(StreamObserver<EgressResponse> responseObserver) {
+        return new ProxyStreamObserver<>(responseObserver, this::handleRequest);//, this::handleError);
+    }
+
+    @Override
+    public StreamObserver<DisconnectNotification> processDisconnect(StreamObserver<DisconnectResponse> responseObserver) {
+        return new ProxyStreamObserver<>(responseObserver, this::handleDisconnect);//, this::handleError);
+    }
+
+    @LogTransaction(includeRequest = false, includeResponse = false)
+    public EgressResponse handleRequest(EgressRequest egressRequest) {
+        if (isDraining()) {
+            log.warn("Server is draining, hence new request cannot be accepted ..");
+            delayShutdown();
+            throw new StatusRuntimeException(Status.UNAVAILABLE.withDescription("Server is draining, hence new request cannot be accepted .."));
+        }
+        incrementRequestCount();
+        log.info("Request count after increment {}",requestCount.get());
+
+        log.debug("Received request: {}", egressRequest);
+        long startTime = System.currentTimeMillis();
+        String errorString = validateRequest(egressRequest);
+        if (errorString != null) {
+            throw new IllegalArgumentException(errorString);
+        }
+
+        NcpdpRequest request = egressRequest.getNcpdpRequest();
+        persistenceService.persistCanonicalRequest(request);
+
+        log.debug("Canonical request with transaction id in metadata added: {}", request);
+
+        NcpdpGenericTransaction domainRequest = egressToDomainMapper.toDomain(request);
+        log.info("Domain request created: {}", domainRequest);
+
+        com.ncpdp.composer.pojo.request.NcpdpRequest composerRequest = domainToComposerMapper.toComposer(domainRequest);
+        String rawRequest = requestService.saveRawRequest(composerRequest);
+
+        int sequenceNumber = sequenceNumberGenerator.generateNextSequenceNumber(egressRequest.getClientId());
+        TransactionLogRequest logRequest = EgressToTransactionLogMapper.INSTANCE.mapToTransactionLogRequest(egressRequest.getNcpdpRequest());
+        transactionLogService.logRequest(logRequest);
+
+        CompletableFuture<InFlightTransactionResponse<TransactionId, RequestWrapper, ResponseWrapper>> promise =
+                requestService.registerTransaction(sequenceNumber, egressRequest, rawRequest);
+
+        try {
+            InFlightTransactionResponse<TransactionId, RequestWrapper, ResponseWrapper> response = promise.get();
+            return processResponse(response, logRequest, startTime, domainRequest, request);
+        } catch (Exception e) {
+            decrementRequestCount();
+            throw new RuntimeException("Error processing request ", e);
+        }
+    }
+
+    private EgressResponse processResponse(InFlightTransactionResponse<TransactionId, RequestWrapper, ResponseWrapper> response,
+                                           TransactionLogRequest logRequest, long startTime, NcpdpGenericTransaction domainRequest, NcpdpRequest request) {
+        if (response != null) {
+            if (response.getStatus().equals(TransactionStatus.TIMED_OUT)) {
+                log.warn("Transaction timed out for request: {}", request);
+                requestService.cancelTransaction(request);
+                decrementRequestCount();
+                log.info("request count after decrement{}",requestCount.get());
+                return EgressResponse.newBuilder().setNcpdpResponse(errorResponseProvider.onTimeout(domainRequest.getTransactionHeaderSegment())).build();
+            } else {
+                transactionLogService.logResponse(EgressToTransactionLogMapper.INSTANCE.mapToTransactionLogResponse(response.getResponse().getResponse()));
+                long estimatedTime = System.currentTimeMillis() - startTime;
+                TransactionLogSummary logSummary = TransactionLogSummary.mapRequest(new TransactionLogSummary(), logRequest);
+                logSummary.setTransactionDurationMillis(estimatedTime);
+                transactionLogService.logSummary(logSummary);
+                decrementRequestCount();
+                log.info("request count after decrement{}",requestCount.get());
+                return EgressResponse.newBuilder().setNcpdpResponse(response.getResponse().getResponse()).build();
+            }
+        }
+        decrementRequestCount();
+        return EgressResponse.newBuilder().setNcpdpResponse(errorResponseProvider.onError(domainRequest.getTransactionHeaderSegment())).build();
+    }
+
+    private void handleError(Throwable throwable, StreamObserver<EgressResponse> responseObserver) {
+        log.error("Error processing request: ", throwable);
+       // responseObserver.onError(Status.INTERNAL.withDescription(throwable.getMessage()).asRuntimeException());
+    }
+
+    private DisconnectResponse handleDisconnect(final DisconnectNotification notification) {
+        log.info("grpc-disconnect: {}", notification);
+        return DisconnectResponse.newBuilder().build();
+    }
+
+    private String validateRequest(EgressRequest egressRequest) {
+        if (!egressRequest.hasNcpdpRequest()) {
+            return "Request must be provided";
+        }
+
+        if (!egressRequest.getNcpdpRequest().hasMetadata()) {
+            return "Request metadata must be provided";
+        }
+
+        return null;
+    }
+    
+    public void waitForAllRequests() throws InterruptedException {
+        lock.lock();
+        try {
+            while (requestCount.get() > 0) {
+                condition.await();
+            }
+        } finally {        	
+        	lock.unlock();
+        }
+    }
+    
+    
+    public void drainRequests() {
+        delayShutdown();
+        isDraining.set(true);
+        log.info("Server is draining, new requests will be ignored.");
+    }
+
+    public boolean isDraining() {
+        return isDraining.get();
+    }
+
+
+    public void initiateShutdown() {
+
+        try {
+            //Thread.sleep(3000);
+            log.info("Initiating shutdown...");
+            drainRequests();
+            waitForAllRequests();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        log.info("All in-flight requests have been processed. Proceeding with shutdown.");
+    }
+
+    public void incrementRequestCount() {
+        lock.lock();
+        try {
+            int count = requestCount.incrementAndGet();
+            log.info("Incrementing request count. Current request count: {}", count);
+            log.info("Incrementing request count. Current request count: {}", requestCount.get());
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void decrementRequestCount() {
+        lock.lock();
+        try {
+            int count = requestCount.decrementAndGet();
+            if (count == 0) {
+                condition.signalAll();
+            }
+            //log.info("Decrementing request count. Current request count: {}", count);
+            log.info("Decrementing request count. Current request count: {}", requestCount.get());
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public int getRequestCount() {
+        return requestCount.get();
+    }
+
+    public void delayShutdown()
+    {
+        try {
+            Thread.sleep(2000);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+    }
+}
