@@ -1,0 +1,313 @@
+Awesome — you're now stepping into hybrid tracing: combining OpenTelemetry (for context propagation) with OneAgent SDK (for enhanced visibility inside Dynatrace).
+
+This is a powerful combo when:
+
+You receive messages over custom protocols like TCP, MQTT, Kafka, etc.
+
+You want to manually start and propagate traces using OpenTelemetry.
+
+But still leverage OneAgent SDK to trace custom logic inside Dynatrace.
+
+✅ Goal
+Use OpenTelemetry to start and propagate a trace (e.g., from a TCP inbound message).
+
+Use OneAgent SDK inside that same thread to create a custom span, which appears under the OpenTelemetry trace in Dynatrace.
+
+💡 Dynatrace Trace Linking — How it Works
+If Dynatrace detects an OpenTelemetry span with a valid traceparent header, it will:
+
+Automatically merge it into the PurePath view in Dynatrace.
+
+And your OneAgent SDK span (if created in the same thread/context) will show up as a child.
+
+✅ Setup Overview
+💠 Dependencies
+xml
+Copy
+Edit
+<!-- OpenTelemetry SDK -->
+<dependency>
+  <groupId>io.opentelemetry</groupId>
+  <artifactId>opentelemetry-api</artifactId>
+</dependency>
+<dependency>
+  <groupId>io.opentelemetry</groupId>
+  <artifactId>opentelemetry-sdk</artifactId>
+</dependency>
+<dependency>
+  <groupId>io.opentelemetry</groupId>
+  <artifactId>opentelemetry-exporter-otlp</artifactId>
+</dependency>
+
+<!-- OneAgent SDK -->
+<dependency>
+  <groupId>com.dynatrace.oneagent.sdk</groupId>
+  <artifactId>oneagent-sdk</artifactId>
+</dependency>
+📦 1. Start a Trace Manually (TCP Receiver or Custom Entry Point)
+java
+Copy
+Edit
+@Autowired
+OpenTelemetry openTelemetry;
+
+@Autowired
+Tracer tracer;
+
+public void receiveTcpMessage(String message) {
+    // Start OpenTelemetry span as root
+    Span span = tracer.spanBuilder("tcp.receive")
+        .setSpanKind(SpanKind.SERVER)
+        .startSpan();
+
+    try (Scope scope = span.makeCurrent()) {
+        // ===> Now OneAgent SDK can hook into this trace
+        handleTcpMessageWithOneAgent(message);
+    } finally {
+        span.end();
+    }
+}
+🧩 2. Inside the Same Context, Use OneAgent SDK
+java
+Copy
+Edit
+@Autowired
+OneAgentSDK oneAgentSDK;
+
+public void handleTcpMessageWithOneAgent(String message) {
+    IncomingRemoteCallTracer tracer = oneAgentSDK.traceIncomingRemoteCall(
+            "custom.tcp.process", "Custom", "tcp");
+
+    tracer.start(); // Dynatrace will link this span under current OpenTelemetry trace
+    try {
+        System.out.println("Handling message: " + message);
+    } catch (Exception ex) {
+        tracer.error(ex);
+    } finally {
+        tracer.end();
+    }
+}
+📡 3. (Optional) Propagate Context to Downstream
+If you're calling Service B via HTTP or Kafka, extract and inject the OpenTelemetry context:
+
+java
+Copy
+Edit
+// Inject OpenTelemetry context into headers
+TextMapSetter<HttpHeaders> setter = HttpHeaders::set;
+openTelemetry.getPropagators().getTextMapPropagator()
+    .inject(Context.current(), headers, setter);
+Then Service B will pick up the same trace.
+
+✅ Result in Dynatrace
+The OpenTelemetry trace shows up as a PurePath.
+
+The OneAgent SDK span (custom.tcp.process) appears within that same PurePath.
+
+If you forward trace context to Service B, it will continue the same trace.
+
+🚀 BONUS: Auto-Link + Manual Span in OneAgent Only?
+You can still use traceIncomingRemoteCall() and just trust that OneAgent SDK will:
+
+Attach to the current context, if any exists (HTTP/Kafka/etc.).
+
+Start a new PurePath if not.
+
+But for end-to-end distributed tracing, OpenTelemetry is your best option to control and propagate context — then let Dynatrace consume it.
+
+Would you like a sample Spring Boot project that shows this exact combo in action (TCP receiver, OpenTelemetry trace start, OneAgent SDK span)? I can generate that next.
+
+
+
+
+
+
+You said:
+yes
+ChatGPT said:
+​Integrating OpenTelemetry with Dynatrace OneAgent SDK in a Spring Boot application allows you to capture and propagate trace information across services, even when dealing with custom protocols like TCP. Below is a step-by-step guide to set up a sample Spring Boot project demonstrating this integration.​
+
+1. Project Setup
+a. Create a New Spring Boot Project
+
+Initialize the Project: Use Spring Initializr to generate a new Spring Boot project with dependencies such as Spring Web and Spring Integration.​
+
+b. Add Required Dependencies
+
+Maven Dependencies: Include the following dependencies in your pom.xml:​
+
+xml
+Copy
+Edit
+<!-- OpenTelemetry API and SDK -->
+<dependency>
+  <groupId>io.opentelemetry</groupId>
+  <artifactId>opentelemetry-api</artifactId>
+  <version>1.10.1</version>
+</dependency>
+<dependency>
+  <groupId>io.opentelemetry</groupId>
+  <artifactId>opentelemetry-sdk</artifactId>
+  <version>1.10.1</version>
+</dependency>
+<dependency>
+  <groupId>io.opentelemetry</groupId>
+  <artifactId>opentelemetry-exporter-otlp</artifactId>
+  <version>1.10.1</version>
+</dependency>
+
+<!-- Dynatrace OneAgent SDK -->
+<dependency>
+  <groupId>com.dynatrace.oneagent.sdk</groupId>
+  <artifactId>oneagent-sdk</artifactId>
+  <version>1.10.1</version>
+</dependency>
+2. OpenTelemetry Configuration
+a. Initialize OpenTelemetry
+
+Configuration Class: Create a configuration class to set up OpenTelemetry:​
+
+java
+Copy
+Edit
+import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class OpenTelemetryConfig {
+
+    @Bean
+    public OpenTelemetry openTelemetry() {
+        OtlpGrpcSpanExporter spanExporter = OtlpGrpcSpanExporter.builder()
+            .setEndpoint("http://localhost:4317") // Adjust endpoint as needed
+            .build();
+
+        SdkTracerProvider tracerProvider = SdkTracerProvider.builder()
+            .addSpanProcessor(SimpleSpanProcessor.create(spanExporter))
+            .build();
+
+        return OpenTelemetrySdk.builder()
+            .setTracerProvider(tracerProvider)
+            .build();
+    }
+
+    @Bean
+    public Tracer tracer(OpenTelemetry openTelemetry) {
+        return openTelemetry.getTracer("tcp-receiver");
+    }
+}
+3. TCP Message Handling with Tracing
+a. TCP Message Receiver
+
+Receiving Messages: Set up a method to receive TCP messages and start an OpenTelemetry span:​
+
+java
+Copy
+Edit
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+@Component
+public class TcpMessageReceiver {
+
+    @Autowired
+    private Tracer tracer;
+
+    public void receiveMessage(String message) {
+        Span span = tracer.spanBuilder("tcp.receive")
+            .setSpanKind(Span.Kind.SERVER)
+            .startSpan();
+
+        try {
+            // Process the message
+            System.out.println("Received message: " + message);
+            // Further processing...
+        } catch (Exception e) {
+            span.recordException(e);
+            throw e;
+        } finally {
+            span.end();
+        }
+    }
+}
+b. Integrate with OneAgent SDK
+
+Enhancing Visibility: Within the same context, use OneAgent SDK to create a custom tracer:​
+
+java
+Copy
+Edit
+import com.dynatrace.oneagent.sdk.api.IncomingRemoteCallTracer;
+import com.dynatrace.oneagent.sdk.api.OneAgentSDK;
+import com.dynatrace.oneagent.sdk.api.OneAgentSDKFactory;
+import org.springframework.stereotype.Component;
+
+@Component
+public class OneAgentTracer {
+
+    private final OneAgentSDK oneAgentSDK = OneAgentSDKFactory.createInstance();
+
+    public void traceCustomOperation(String operationName, Runnable operation) {
+        IncomingRemoteCallTracer tracer = oneAgentSDK.traceIncomingRemoteCall(
+            operationName, "TCP", "Custom");
+
+        tracer.start();
+        try {
+            operation.run();
+        } catch (Exception e) {
+            tracer.error(e);
+            throw e;
+        } finally {
+            tracer.end();
+        }
+    }
+}
+c. Combining OpenTelemetry and OneAgent SDK
+
+Unified Tracing: Combine both tracers to ensure the spans are linked:​
+
+java
+Copy
+Edit
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+@Component
+public class MessageProcessor {
+
+    @Autowired
+    private TcpMessageReceiver tcpMessageReceiver;
+
+    @Autowired
+    private OneAgentTracer oneAgentTracer;
+
+    public void processMessage(String message) {
+        oneAgentTracer.traceCustomOperation("custom.tcp.process", () -> {
+            tcpMessageReceiver.receiveMessage(message);
+            // Additional processing...
+        });
+    }
+}
+4. Running the Application
+Start the Application: Run your Spring Boot application. Ensure that the OpenTelemetry Collector is running and accessible at the configured endpoint.​
+Medium
++1
+Grafana Labs
++1
+
+Send Test Messages: Send TCP messages to the application and observe the traces in Dynatrace and any other configured observability platforms.​
+
+5. Observing Traces
+Dynatrace Integration: With OneAgent installed, the custom traces created using the OneAgent SDK will be visible in Dynatrace, linked with the OpenTelemetry traces.​
+
+Trace Continuity: Ensure that the context propagation is correctly set up so that traces are continuous across services.​
+
+This setup demonstrates how to manually instrument a Spring Boot application to capture and propagate trace information using OpenTelemetry, while enhancing visibility in Dynatrace with the OneAgent SDK.
