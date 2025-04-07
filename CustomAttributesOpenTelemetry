@@ -1,0 +1,124 @@
+Absolutely! Let's level it up and make your @TraceSpan annotation more powerful by:
+
+✅ 1. Adding custom tags/keys to @TraceSpan
+You can pass dynamic key-value pairs (as attributes or tags) right inside the annotation. This gives you fine control over what metadata appears in OpenTelemetry or Dynatrace.
+
+🔧 Enhanced Annotation
+java
+Copy
+Edit
+@Target({ElementType.METHOD})
+@Retention(RetentionPolicy.RUNTIME)
+public @interface TraceSpan {
+    String value(); // Span name
+    String[] attributes() default {}; // Optional custom tags (e.g., {"message.type=TCP", "env=prod"})
+}
+✅ 2. Read & Apply Attributes in the Aspect
+You’ll now parse attributes and apply them to both:
+
+OpenTelemetry span
+
+Dynatrace custom request attributes
+
+java
+Copy
+Edit
+@Aspect
+@Component
+public class TracingAspect {
+
+    private final Tracer otelTracer;
+    private final OneAgentSDK oneAgentSDK;
+
+    public TracingAspect(Tracer tracer) {
+        this.otelTracer = tracer;
+        this.oneAgentSDK = OneAgentSDKFactory.createInstance();
+    }
+
+    @Around("@annotation(traceSpan)")
+    public Object traceWithAttributes(ProceedingJoinPoint pjp, TraceSpan traceSpan) throws Throwable {
+        String spanName = traceSpan.value();
+
+        Span otelSpan = otelTracer.spanBuilder(spanName)
+                .setSpanKind(SpanKind.INTERNAL)
+                .startSpan();
+
+        try (Scope scope = otelSpan.makeCurrent()) {
+            IncomingRemoteCallTracer dtTracer = oneAgentSDK.traceIncomingRemoteCall(
+                    spanName, "Custom", "SpringAOP");
+
+            // ⬇️ Apply annotation-level attributes
+            for (String attr : traceSpan.attributes()) {
+                String[] parts = attr.split("=", 2);
+                if (parts.length == 2) {
+                    otelSpan.setAttribute(parts[0].trim(), parts[1].trim());
+                    dtTracer.setCustomRequestAttribute(parts[0].trim(), parts[1].trim());
+                }
+            }
+
+            // ⬇️ Sample: extracting metadata from argument
+            Object[] args = pjp.getArgs();
+            if (args != null && args.length > 0) {
+                Object firstArg = args[0];
+                if (firstArg instanceof String message) {
+                    otelSpan.setAttribute("message.length", message.length());
+                    dtTracer.setCustomRequestAttribute("message.id", "xyz-123");
+                } else if (firstArg instanceof MyMessageObject msgObj) {
+                    otelSpan.setAttribute("message.id", msgObj.getId());
+                    otelSpan.setAttribute("message.source", msgObj.getSource());
+                    dtTracer.setCustomRequestAttribute("msg.source", msgObj.getSource());
+                }
+            }
+
+            dtTracer.start();
+            try {
+                return pjp.proceed();
+            } catch (Throwable ex) {
+                otelSpan.recordException(ex);
+                dtTracer.error(ex);
+                throw ex;
+            } finally {
+                dtTracer.end();
+            }
+
+        } finally {
+            otelSpan.end();
+        }
+    }
+}
+✅ 3. Usage: Add Tags When Annotating
+🟦 Example with TCP message
+java
+Copy
+Edit
+@TraceSpan(value = "tcp.receive", attributes = {"message.type=TCP", "env=dev"})
+public void processTcpMessage(String msg) {
+    System.out.println("Msg: " + msg);
+}
+🟧 Example with Custom POJO (and tag extraction)
+java
+Copy
+Edit
+@TraceSpan(value = "processing.custom.message", attributes = {"event=custom"})
+public void processMessage(MyMessageObject obj) {
+    System.out.println("Received: " + obj.getId());
+}
+Where MyMessageObject is:
+
+java
+Copy
+Edit
+public class MyMessageObject {
+    private String id;
+    private String source;
+
+    // Getters & setters
+}
+✅ Now You Have:
+Declarative tracing with @TraceSpan
+
+Optional key=value attributes
+
+Dynamic metadata from method arguments
+
+Dual tracing with OpenTelemetry + OneAgent SDK
