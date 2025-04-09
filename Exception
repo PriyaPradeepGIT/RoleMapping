@@ -1,0 +1,53 @@
+2025-04-09T16:57:57.147+05:30  INFO 9700 --- [pbmcore-claim-inactivity-feed-service] [nio-9006-exec-1] c.o.u.a.c.InactiveUserController         : InactivateUsersResponse(timestamp=2025-04-09T16:57:57.147122+05:30, applicationName=Rx-BRIDG, inactiveUsers=null, exception=SFTP Error: java.net.ConnectException: Connection timed out: connect)
+2025-04-09T16:57:57.175+05:30  WARN 9700 --- [pbmcore-claim-inactivity-feed-service] [nio-9006-exec-1] .w.s.m.s.DefaultHandlerExceptionResolver : Resolved [org.springframework.http.converter.HttpMessageNotWritableException: No converter for [class com.optum.user.account.domain.InactivateUsersResponse] with preset Content-Type 'application/json']
+
+@Data
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Accessors(fluent = true)
+@ToString
+public class InactiveFeedError {
+   private OffsetDateTime timestamp;
+   private String status;
+   private  String message;
+}
+
+@ToString
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Accessors(fluent = true)
+@Data
+public class InactivateUsersResponse {
+    private OffsetDateTime timestamp;
+    private String applicationName;
+    private List<String> inactiveUsers;
+    private String exception;
+
+   }
+
+@RestControllerAdvice
+public class InactiveUserExceptionHandler  {
+
+    @ExceptionHandler(value = FtpErrorException.class)
+    @ResponseBody
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    protected ResponseEntity<InactiveFeedError> handleFtpErrorException(FtpErrorException e) {
+        InactiveFeedError error = new InactiveFeedError(OffsetDateTime.now(), HttpStatus.UNAUTHORIZED.toString(),e.getMessage());
+        return new ResponseEntity<>(error, HttpStatus.UNAUTHORIZED);
+    }
+
+    @ExceptionHandler(IOException.class)
+    @ResponseBody
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public final ResponseEntity<InactiveFeedError> handleAllExceptions(Exception e) {
+        InactiveFeedError error = new InactiveFeedError(OffsetDateTime.now(), HttpStatus.INTERNAL_SERVER_ERROR.toString(), e.getMessage());
+        return new ResponseEntity<>(error, HttpStatus.NOT_FOUND);
+    }
+}
+
+2025-04-09T16:57:57.147+05:30  INFO 9700 --- [pbmcore-claim-inactivity-feed-service] [nio-9006-exec-1] c.o.u.a.c.InactiveUserController         : InactivateUsersResponse(timestamp=2025-04-09T16:57:57.147122+05:30, applicationName=Rx-BRIDG, inactiveUsers=null, exception=SFTP Error: java.net.ConnectException: Connection timed out: connect)
+2025-04-09T16:57:57.175+05:30  WARN 9700 --- [pbmcore-claim-inactivity-feed-service] [nio-9006-exec-1] .w.s.m.s.DefaultHandlerExceptionResolver : Resolved [org.springframework.http.converter.HttpMessageNotWritableException: No converter for [class com.optum.user.account.domain.InactivateUsersResponse] with preset Content-Type 'application/json']
