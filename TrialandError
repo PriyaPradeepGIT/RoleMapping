@@ -1,0 +1,144 @@
+🔍 Most Common Root Causes:
+You’re in the wrong directory on the SFTP server (or don't have write access to it).
+
+File already exists and cannot be overwritten (some SFTP servers disallow this).
+
+The file.getName() has unexpected characters or length issues.
+
+The fis stream is not valid, e.g. file is empty or unreadable.
+
+Permission issue on the remote directory (you can cd into it, but not put).
+
+✅ Fix Strategy
+Let's log more details and test step-by-step. Try this adjusted block before calling put(...):
+
+java
+Copy
+Edit
+log.info("Local file path: {}", file.getAbsolutePath());
+log.info("File exists: {}, Can read: {}", file.exists(), file.canRead());
+log.info("Remote working directory: {}", sftpChannel.pwd());
+log.info("Remote upload file name: {}", file.getName());
+Then change the put line to use the full path explicitly, as a test:
+
+java
+Copy
+Edit
+sftpChannel.put(fis, "./" + file.getName());
+Or even better, specify an alternate name to be sure:
+
+java
+Copy
+Edit
+String remoteFileName = "test_upload.csv";  // hardcode for testing
+sftpChannel.put(fis, remoteFileName);
+🧪 Test Suggestion
+Before uploading, list the current directory:
+
+java
+Copy
+Edit
+Vector<ChannelSftp.LsEntry> list = sftpChannel.ls(".");
+for (ChannelSftp.LsEntry entry : list) {
+    log.info("Remote file: {}", entry.getFilename());
+}
+This confirms:
+
+The directory exists
+
+The server is ready
+
+You know if the file already exists
+
+💡 Example: Full Snippet Around put
+java
+Copy
+Edit
+fis = new FileInputStream(file);
+
+log.info("Uploading file: {}", file.getName());
+log.info("File exists: {}, canRead: {}", file.exists(), file.canRead());
+log.info("Remote directory: {}", sftpChannel.pwd());
+
+Vector<ChannelSftp.LsEntry> list = sftpChannel.ls(".");
+for (ChannelSftp.LsEntry entry : list) {
+    log.info("Remote file: {}", entry.getFilename());
+}
+
+String remoteFileName = file.getName(); // or hardcode "test_upload.csv"
+sftpChannel.put(fis, remoteFileName);
+🛠 If It Still Fails...
+Try this to rule out filename/path issue:
+
+java
+Copy
+Edit
+String remotePath = sftpChannel.pwd() + "/" + file.getName();
+sftpChannel.put(fis, remotePath);
+Let me know what the logs show, especially:
+
+sftpChannel.pwd()
+
+File exists & canRead
+
+File listing
+
+I can help quickly pinpoint the issue based on that!
+
+
+
+
+
+
+
+You said:
+my directory I am giving "/Test" should i prefix "/"
+
+
+ChatGPT said:
+Yes — this is very important with SFTP: the leading slash makes a big difference.
+
+✅ What does /Test mean?
+/Test means absolute path from the root of the SFTP server.
+
+If the SFTP user doesn't have permission to write to /Test, or /Test doesn't exist, you'll get a "failure" error.
+
+🔄 Try without the leading /
+If your SFTP user lands in a home directory, and Test is a folder inside that, use:
+
+java
+Copy
+Edit
+sftpChannel.cd("Test"); // relative to your SFTP home directory
+💡 Safer Example:
+java
+Copy
+Edit
+// Try relative path first
+sftpChannel.cd("Test");
+
+// OR if you're sure it's an absolute path and the user has access
+// sftpChannel.cd("/Test");
+
+fis = new FileInputStream(file);
+sftpChannel.put(fis, file.getName());
+✅ To Confirm the Path Works:
+Add this before put:
+
+java
+Copy
+Edit
+log.info("Remote directory: {}", sftpChannel.pwd());
+If sftpChannel.pwd() logs something like /home/myuser/Test, you're good.
+
+🛠 If Still in Doubt:
+Try uploading directly to . (your home directory):
+
+java
+Copy
+Edit
+sftpChannel.cd(".");
+sftpChannel.put(fis, file.getName()); // Just to test if upload works at all
+Then move to Test once you're sure the basics are working.
+
+Let me know what your sftpChannel.pwd() prints and I’ll guide based on that!
