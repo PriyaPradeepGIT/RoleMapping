@@ -1,0 +1,100 @@
+package com.optum.user.account.service.impl;
+
+import com.optum.user.account.config.InactivateFtpConfig;
+import com.optum.user.account.domain.InactivateUsersResponse;
+import com.optum.user.account.exceptions.FtpErrorException;
+import com.optum.user.account.repository.InactiveUserRepository;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.io.File;
+import java.util.Arrays;
+import java.util.Collections;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class InactivityFeedServiceImplTest {
+
+    @Mock
+    private InactiveUserRepository inactiveUserRepository;
+
+    @Mock
+    private InactivateFtpConfig inactivateFtpConfig;
+
+    @InjectMocks
+    private InactivityFeedServiceImpl inactivityFeedService;
+
+    @BeforeEach
+    void setup() {
+        MockitoAnnotations.openMocks(this);
+
+        // Set environment variables via reflection if needed
+        setEnvValue("appId", "myAppId");
+        setEnvValue("appName", "MyAppName");
+        setEnvValue("envId", "dev");
+    }
+
+    @Test
+    void testCreateInactivityFeed_success() {
+        when(inactiveUserRepository.findInactiveUserIds()).thenReturn(Arrays.asList("user1", "user2"));
+
+        // mock FTP config
+        when(inactivateFtpConfig.getFtpHost()).thenReturn("dummyHost");
+        when(inactivateFtpConfig.getFtpUsername()).thenReturn("dummyUser");
+        when(inactivateFtpConfig.getFtpPassword()).thenReturn("dummyPass");
+        when(inactivateFtpConfig.getFtpDirectory()).thenReturn("dummyDir");
+
+        // Stub out the FTP logic by mocking private methods if using PowerMockito (optional), or override in test class
+
+        InactivateUsersResponse response = inactivityFeedService.createInactivityFeed();
+
+        assertNotNull(response);
+        assertEquals("MyAppName", response.getApplicationName());
+        assertEquals(2, response.getInactiveUsers().size());
+        assertNull(response.getException());
+    }
+
+    @Test
+    void testCreateInactivityFeed_emptyUserList() {
+        when(inactiveUserRepository.findInactiveUserIds()).thenReturn(Collections.emptyList());
+
+        InactivateUsersResponse response = inactivityFeedService.createInactivityFeed();
+
+        assertNotNull(response);
+        assertEquals("MyAppName", response.getApplicationName());
+        assertTrue(response.getInactiveUsers().isEmpty());
+        assertNull(response.getException());
+    }
+
+    @Test
+    void testCreateInactivityFeed_exceptionDuringFtp() {
+        when(inactiveUserRepository.findInactiveUserIds()).thenReturn(Arrays.asList("user1"));
+        when(inactivateFtpConfig.getFtpHost()).thenReturn(null); // trigger exception
+
+        InactivateUsersResponse response = inactivityFeedService.createInactivityFeed();
+
+        assertNotNull(response);
+        assertEquals("MyAppName", response.getApplicationName());
+        assertNotNull(response.getException());
+    }
+
+    // Helper to set private field values
+    private void setEnvValue(String fieldName, String value) {
+        try {
+            var field = InactivityFeedServiceImpl.class.getDeclaredField(fieldName);
+            field.setAccessible(true);
+            field.set(inactivityFeedService, value);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+}
