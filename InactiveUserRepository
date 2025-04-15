@@ -1,0 +1,62 @@
+package com.optum.user.account.repository;
+
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import org.bson.Document;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Repository;
+
+import com.mongodb.client.FindIterable;
+import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.Filters;
+
+import lombok.extern.slf4j.Slf4j;
+
+@Repository
+@Slf4j
+public class InactiveUserRepository {
+
+	private static final String USER_LOGIN_COLLECTION = "claim_user_login_events";
+
+	@Autowired
+	private final MongoDatabase mongoDatabase;
+
+	public InactiveUserRepository(MongoDatabase mongoDatabase) {
+		this.mongoDatabase = mongoDatabase;
+	}
+
+	public List<String> findInactiveUserIds() {
+		MongoCollection<Document> collection = mongoDatabase.getCollection(USER_LOGIN_COLLECTION);
+
+		// Calculate the date 90 days ago in US Central Time
+		LocalDateTime now = LocalDateTime.now();
+		ZonedDateTime centralTimeNow = now.atZone(ZoneId.systemDefault())
+				.withZoneSameInstant(ZoneId.of("America/Chicago"));
+		LocalDateTime ninetyDaysAgoCentralTime = centralTimeNow.minusDays(90).toLocalDateTime();
+        log.info("Date before 90 days {}", ninetyDaysAgoCentralTime);
+
+		// Convert LocalDateTime to Date for MongoDB query
+		Date ninetyDaysAgoDate = Date.from(ninetyDaysAgoCentralTime.atZone(ZoneId.systemDefault()).toInstant());
+
+		// Query to find inactive users
+		FindIterable<Document> documents = collection.find(Filters.lt("lastLoginDate", ninetyDaysAgoDate));
+
+		log.info(documents.toString());
+			// Extract user IDs from the result
+			List<String> inactiveUserIds = new ArrayList<>();
+        for (Document doc : documents) {
+            inactiveUserIds.add(doc.getString("_id"));
+            log.info("Document List: {}", doc);
+        }
+        return inactiveUserIds;
+
+
+	}
+
+}
