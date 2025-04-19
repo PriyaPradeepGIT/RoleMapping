@@ -1,0 +1,92 @@
+
+import java.util.List;
+import java.util.function.Consumer;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.integration.channel.FixedSubscriberChannel;
+import org.springframework.integration.context.IntegrationContextUtils;
+import org.springframework.integration.dsl.FilterEndpointSpec;
+import org.springframework.integration.dsl.IntegrationFlow;
+import org.springframework.integration.router.HeaderValueRouter;
+
+import com.test.pbmcore.claim.constants.Channels;
+import com.test.pbmcore.claim.constants.ExternalClientInterfaceHeaders;
+import com.test.pbmcore.claim.service.transmission.TransmissionRegistry;
+import com.test.pbmcore.claim.tcp.TcpPortBinding;
+import com.test.pbmcore.claim.tcp.TcpPortNameHelper;
+import com.test.pbmcore.claim.tcp.handler.DenyByMissingHeaderFilter;
+import com.test.pbmcore.claim.tcp.handler.DenyByPortMetadataFilter;
+import com.test.pbmcore.claim.tcp.handler.DenyByPortSuspendFilter;
+import com.test.pbmcore.claim.tcp.handler.DenyByRequestAttributeFilter;
+import com.test.pbmcore.claim.tcp.handler.TransactionLogRequestHandler;
+import com.test.pbmcore.claim.tcp.handler.TransactionLogResponseHandler;
+import com.test.pbmcore.claim.tcp.transform.TransmissionRequestPreProcessor;
+
+@Configuration
+public class ChannelFlowConfiguration
+{
+	
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Define TCP Inbound Flow
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	
+	@Bean
+	public IntegrationFlow requestFlow(
+			final DenyByPortSuspendFilter denyByPortSuspendFilter,
+			final TransmissionRequestPreProcessor transmissionRequestPreProcessor,
+			final DenyByMissingHeaderFilter denyByMissingHeaderFilter,
+			final DenyByRequestAttributeFilter denyByAttributeFilter,
+			final DenyByPortMetadataFilter denyByPortMetadataFilter,
+			final TransmissionRegistry registry,
+			final TransactionLogRequestHandler logHandler) {
+		return IntegrationFlow.from(Channels.TCP_INBOUND)
+			.wireTap(new FixedSubscriberChannel(registry::startTransmission))
+			.filter(denyByPortSuspendFilter, nullDiscardChannel())
+			.transform(transmissionRequestPreProcessor)
+			.filter(denyByMissingHeaderFilter, nullDiscardChannel())
+			.filter(denyByAttributeFilter, nullDiscardChannel())
+			.filter(denyByPortMetadataFilter, nullDiscardChannel())
+//			.log(LoggingHandler.Level.INFO, m -> "request: " + m.getHeaders().get(ExternalClientInterfaceHeaders.TRANSMISSION_ID, String.class) + " - " + m.getHeaders())
+			.wireTap(new FixedSubscriberChannel(logHandler))
+			.channel(Channels.REQUEST)
+			.get();
+	}
+	
+	
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Define TCP Outbound Flow
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	
+	@Bean
+	public IntegrationFlow responseFlow(final TransmissionRegistry registry, final TransactionLogResponseHandler logHandler) {
+		return IntegrationFlow.from(Channels.RESPONSE)
+//			.log(LoggingHandler.Level.INFO, m -> "response: " + m.getHeaders().get(ExternalClientInterfaceHeaders.TRANSMISSION_ID, String.class) + " - " + m.getHeaders())
+			.wireTap(new FixedSubscriberChannel(logHandler))
+			.wireTap(new FixedSubscriberChannel(registry::closeTransmission))
+			.channel(Channels.TCP_OUTBOUND)
+			.get();
+	}
+	
+	@Bean
+	public IntegrationFlow tcpOutboundRouter(final List<TcpPortBinding> bindings) {
+		// configure the header-based router
+		final HeaderValueRouter outboundRouter = new HeaderValueRouter(ExternalClientInterfaceHeaders.SOURCE);
+		for (TcpPortBinding binding : bindings) {
+			outboundRouter.setChannelMapping(binding.getName(), TcpPortNameHelper.outboundChannelId(binding.getName()));
+		}
+		
+		return IntegrationFlow.from(Channels.TCP_OUTBOUND)
+			.route(outboundRouter)
+			.get();
+	}
+	
+	
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Private Helper Methods
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	
+	private Consumer<FilterEndpointSpec> nullDiscardChannel() {
+		return fs -> fs.discardChannel(IntegrationContextUtils.NULL_CHANNEL_BEAN_NAME);
+	}
+}
