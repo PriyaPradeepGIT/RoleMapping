@@ -1,0 +1,142 @@
+Perfect! Here's how you can **clean up your code** by creating a **helper method** for Dynatrace-traced wiretaps so you don't have to repeat the `FixedSubscriberChannel` wrapping + tracing logic everywhere.
+
+---
+
+### ✅ Step 1: Add a Helper Method for Traced WireTap
+
+Place this method inside your `ChannelFlowConfiguration` class:
+
+```java
+private FixedSubscriberChannel tracedWireTap(String operationName, String serviceName, Consumer<Message<?>> actualHandler) {
+	return new FixedSubscriberChannel(message ->
+		dynatraceTracingUtil.traceTcpMessage(operationName, serviceName, message, actualHandler));
+}
+```
+
+This abstracts away the tracing logic nicely. Now you can just say _“I want to trace this wireTap with a name and service”_ and it's cleanly wired.
+
+---
+
+### ✅ Step 2: Use It in Your Flows
+
+Update your `requestFlow` like this:
+
+```java
+@Bean
+public IntegrationFlow requestFlow(
+		final DenyByPortSuspendFilter denyByPortSuspendFilter,
+		final TransmissionRequestPreProcessor transmissionRequestPreProcessor,
+		final DenyByMissingHeaderFilter denyByMissingHeaderFilter,
+		final DenyByRequestAttributeFilter denyByAttributeFilter,
+		final DenyByPortMetadataFilter denyByPortMetadataFilter,
+		final TransmissionRegistry registry,
+		final TransactionLogRequestHandler logHandler) {
+
+	return IntegrationFlow.from(Channels.TCP_INBOUND)
+
+		.wireTap(tracedWireTap("start-transmission", "TransmissionRegistry", registry::startTransmission))
+
+		.filter(denyByPortSuspendFilter, nullDiscardChannel())
+		.transform(transmissionRequestPreProcessor)
+		.filter(denyByMissingHeaderFilter, nullDiscardChannel())
+		.filter(denyByAttributeFilter, nullDiscardChannel())
+		.filter(denyByPortMetadataFilter, nullDiscardChannel())
+
+		.wireTap(tracedWireTap("log-request", "TransactionLogRequestHandler", logHandler::handleMessage))
+
+		.channel(Channels.REQUEST)
+		.get();
+}
+```
+
+And similarly in your `responseFlow`:
+
+```java
+@Bean
+public IntegrationFlow responseFlow(final TransmissionRegistry registry, final TransactionLogResponseHandler logHandler) {
+	return IntegrationFlow.from(Channels.RESPONSE)
+
+		.wireTap(tracedWireTap("log-response", "TransactionLogResponseHandler", logHandler::handleMessage))
+		.wireTap(tracedWireTap("close-transmission", "TransmissionRegistry", registry::closeTransmission))
+
+		.channel(Channels.TCP_OUTBOUND)
+		.get();
+}
+```
+
+---
+
+### ✅ Bonus Tip
+
+If you want to add even more convenience, you can overload `tracedWireTap` with default `serviceName`, or wrap this utility into a reusable component shared by multiple flows!
+
+Let me know if you want to move this logic into a shared Spring `@Component` for other flows too.
+
+
+
+
+
+
+
+
+
+DynatraceTracingUtil
+
+
+import com.dynatrace.oneagent.sdk.api.OneAgentSDK;
+import com.dynatrace.oneagent.sdk.api.OutgoingMessageTracer;
+import com.dynatrace.oneagent.sdk.api.enums.MessagingDestinationType;
+import org.springframework.messaging.Message;
+
+import java.util.function.Consumer;
+
+import com.test.pbmcore.claim.constants.ExternalClientInterfaceHeaders;
+
+public class DynatraceTracingUtil {
+
+	private final OneAgentSDK oneAgentSDK;
+
+	public DynatraceTracingUtil(OneAgentSDK oneAgentSDK) {
+		this.oneAgentSDK = oneAgentSDK;
+	}
+
+	public void traceTcpMessage(String spanName, String channelOrHandler, Message<?> message, Consumer<Message<?>> logic) {
+		OutgoingMessageTracer tracer = oneAgentSDK.traceOutgoingMessage(channelOrHandler, MessagingDestinationType.TCP_IP, spanName);
+
+		// Extract transmissionId and port using constants
+		Object transmissionId = message.getHeaders().get(ExternalClientInterfaceHeaders.TRANSMISSION_ID);
+		Object port = message.getHeaders().get(ExternalClientInterfaceHeaders.PORT);
+
+		// Set metadata for better trace visualization
+		if (transmissionId != null) {
+			tracer.setProtocolName("PBM-TCP");
+			tracer.setVendorMessageId(transmissionId.toString());  // shows in Dynatrace as custom metadata
+		}
+		if (port != null) {
+			try {
+				tracer.setDestinationAddress("localhost", Integer.parseInt(port.toString())); // appears as destination
+			} catch (NumberFormatException e) {
+				// optionally log or ignore
+			}
+		}
+
+		tracer.start();
+		try {
+			logic.accept(message); // your business logic (handlers)
+			tracer.success();
+		} catch (Exception e) {
+			tracer.error(e);
+			throw e;
+		}
+	}
+}
+
+
+@Configuration
+public class ChannelFlowConfiguration {
+
+	private final DynatraceTracingUtil dynatraceTracingUtil;
+
+	public ChannelFlowConfiguration(DynatraceTracingUtil dynatraceTracingUtil) {
+		this.dynatraceTracingUtil = dynatraceTracingUtil;
+	}
