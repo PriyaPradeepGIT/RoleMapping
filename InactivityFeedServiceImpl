@@ -1,166 +1,195 @@
+package com.optum.user.account.service.impl;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Vector;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.jcraft.jsch.ChannelSftp;
+import com.jcraft.jsch.JSch;
+import com.jcraft.jsch.Session;
+import com.optum.user.account.config.InactivateFtpConfig;
+import com.optum.user.account.domain.InactivateUsersResponse;
+import com.optum.user.account.exceptions.FtpErrorException;
+import com.optum.user.account.repository.InactiveUserRepository;
+import com.optum.user.account.service.InactivityFeedService;
+
+import lombok.extern.slf4j.Slf4j;
+
 @Service
 @Slf4j
 public class InactivityFeedServiceImpl implements InactivityFeedService {
 
-    @Value("${AppID}")
-    private String appId;
+	@Value("${AppID}")
+	private String appId;
 
-    @Value("${EnvID}")
-    private String envId;
+	@Value("${AppName}")
+	private String appName;
 
+	@Value("${EnvID}")
+	private String envId;
 
-    private static final DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss");
-    private static final String header ="LastName,FirstName,UniqueIdentifier,RequestType,RoleName,UserId,AccountType\n";
+	private static final DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss");
+	private static final String header = "LastName,FirstName,UniqueIdentifier,RequestType,RoleName,UserId,AccountType\n";
 
-    public static final String LOG_CONTEXT = "context";
-    private InactivateFtpConfig inactivateFtpConfig;
-
-
-    @Autowired
-    private InactiveUserRepository inactiveUserRepository;
-
-    @Autowired
-    public InactivityFeedServiceImpl(InactivateFtpConfig inactivateFtpConfig)
-    {
-        this.inactivateFtpConfig = inactivateFtpConfig;
-    }
+	public final InactivateFtpConfig inactivateFtpConfig;
 
 
-    @Transactional(rollbackFor = Exception.class)
-    public InactivateUsersResponse createInactivityFeed() {
-        log.info("Begin Inactivity Feed FTP :: Execution Time - {}", dateTimeFormatter.format(LocalDateTime.now()));
+	public InactiveUserRepository inactiveUserRepository;
 
-       // List<String> inactiveUsers = inactiveUserRepository.findInactiveUserIds();
-        List<String> inactiveUsers =null;
-        InactivateUsersResponse inactivateResponse = new InactivateUsersResponse();
-        inactivateResponse.inactiveUsers(inactiveUsers);
-        String applicationName = "Rx-BRIDG";
-        inactivateResponse.applicationName(applicationName);
-        inactivateResponse.timestamp(OffsetDateTime.now());
+	@Autowired
+	public InactivityFeedServiceImpl(InactivateFtpConfig inactivateFtpConfig,
+			InactiveUserRepository inactiveUserRepository) {
+		this.inactivateFtpConfig = inactivateFtpConfig;
+		this.inactiveUserRepository = inactiveUserRepository;
+	}
 
+	@Transactional(rollbackFor = Exception.class)
+	public InactivateUsersResponse createInactivityFeed() {
+		log.info("Begin Inactivity Feed FTP :: Execution Time - {}", dateTimeFormatter.format(LocalDateTime.now()));
 
-//        if (inactiveUsers.isEmpty()) {
-//            log.info("No inactive users to process");
-//            return inactivateResponse;
-//        }
+		//List<String> inactiveUsers = inactiveUserRepository.findInactiveUserIds();
+		List<String> inactiveUsers =new ArrayList<>();
+		InactivateUsersResponse inactivateResponse = new InactivateUsersResponse();
+		inactivateResponse.setInactiveUsers(inactiveUsers);
+		inactivateResponse.setApplicationName(appName);
+		inactivateResponse.setTimestamp(OffsetDateTime.now());
+		try {
+			String parserType = "20";
+			String fileName = appId + "." + envId + "." + parserType + ".InactiveAccountsFile_"
+					+ LocalDate.now().format(DateTimeFormatter.ofPattern("MMddyyyy"));
+			File tempFile = createCsvFile(inactiveUsers, fileName);// create temp file
+			sendCsvFileUsingSFTP(tempFile.getAbsolutePath());// send the temp file to transfer
+			deleteTempFile(tempFile); // delete the temp file
+		} catch (Exception e) {
+			inactivateResponse.setTimestamp(OffsetDateTime.now());
+			inactivateResponse.setException(e.getMessage());
+			return inactivateResponse;
+		}
+		log.info("End Inactivity Feed FTP :: Execution Time - {}", dateTimeFormatter.format(LocalDateTime.now()));
+		inactivateResponse.setTimestamp(OffsetDateTime.now());
+		return inactivateResponse;
+	}
 
+	/**
+	 * Creates a CSV file with the inactive users.
+	 *
+	 * @param inactiveUsers List of inactive users to be written to the CSV file.
+	 * @throws IOException If an I/O error occurs while writing the file.
+	 */
+	public File createCsvFile(List<String> inactiveUsers, String fileName) throws IOException {
 
-        try {
-            String parserType = "20";
-            String fileName = appId + "." + envId + "."+ parserType +".InactiveAccounts_"
-                    + LocalDate.now().format(DateTimeFormatter.ofPattern("MMddyyyy")) + ".csv";
-            createCsvFile(inactiveUsers,fileName);
-           // sendCsvFile(fileName);
-            sendCsvFileUsingSFTP(fileName);
+		File tempFile = File.createTempFile(fileName, ".csv");
+		log.info("Temporary file created: {}", tempFile);
+		try (PrintWriter pw = new PrintWriter(new FileWriter(tempFile))) {
+			pw.write(header);
+			pw.write(",,,remove,,ahembry,\n");
+//			if (inactiveUsers != null) {
+//				for (String inactiveUser : inactiveUsers) {
+//					log.info(inactiveUser);
+//					pw.write(",,,remove,," + inactiveUser + ",\n");
+//				}
+//			}
+			pw.flush();
+		} catch (Exception e) {
+			log.error("Exception while creating temp CSV file :", e);
+			throw e; // Rethrow exception to propagate so we don't mark records inactive that haven't
+						// been processed
+		}
+		return tempFile;
+	}
 
-        } catch (Exception e) {
-            inactivateResponse.timestamp(OffsetDateTime.now());
-            inactivateResponse.exception(e.getMessage());
-            return inactivateResponse;
-        }
-        log.info("End Inactivity Feed FTP :: Execution Time - {}", dateTimeFormatter.format(LocalDateTime.now()));
-        inactivateResponse.timestamp(OffsetDateTime.now());
-        return inactivateResponse;
-    }
+	/**
+	 * Sends the CSV file to the SFTP server.
+	 *
+	 * @param fileName The name of the file to be sent.
+	 * @throws FtpErrorException If an error occurs during SFTP transfer.
+	 * @throws IOException       If an I/O error occurs while sending the file.
+	 */
+	public void sendCsvFileUsingSFTP(String fileName) throws FtpErrorException, IOException {
+		JSch jsch = new JSch();
+		Session session = null;
+		ChannelSftp sftpChannel = null;
 
+		try {
+			log.info("Connecting to SFTP server: {}", inactivateFtpConfig.getFtpHost());
+			session = jsch.getSession(inactivateFtpConfig.getFtpUsername(), inactivateFtpConfig.getFtpHost(), 22);
+			session.setPassword(inactivateFtpConfig.getFtpPassword());
+			session.setConfig("StrictHostKeyChecking", "no");
+			session.connect();
+			log.info("Connected to session");
+
+			sftpChannel = (ChannelSftp) session.openChannel("sftp");
+			sftpChannel.connect();
+			log.info("Connected to sftpchannel");
+
+			if (sftpChannel.isConnected()) {
+				log.info("Configured ftp directory: {}", inactivateFtpConfig.getFtpDirectory());
+				sftpChannel.cd("RxBRIDGInactivityFeed");
+				File file = new File(fileName);
+				log.info("Local file path: {}", file.getAbsolutePath());
+				log.info("File exists: {}, Can read: {}", file.exists(), file.canRead());
+				log.info("Remote working directory: {}", sftpChannel.pwd());
+				log.info("Remote upload file name: {}", file.getName());
+
+				// Use try-with-resources for FileInputStream
+				try (FileInputStream fis = new FileInputStream(file)) {
+					sftpChannel.put(fis, file.getName());
+				}
+			}
+		} catch (Exception e) {
+			log.warn("SFTP Error: ", e);
+			throw new FtpErrorException("SFTP Error: " + e.getMessage());
+		} finally {
+			if (sftpChannel != null) {
+				sftpChannel.disconnect();
+			}
+			if (session != null) {
+				session.disconnect();
+			}
+		}
+	}
+	
     /**
-     * Creates a CSV file with the inactive users.
+     * Deletes the temporary file.
      *
-     * @param inactiveUsers List of inactive users to be written to the CSV file.
-     * @throws IOException If an I/O error occurs while writing the file.
+     * @param file The file to be deleted.
      */
-    private void createCsvFile(List<String> inactiveUsers,String fileName) throws IOException {
+//    private void deleteTempFile(File file) {
+//        if (file != null && file.exists()) {
+//            boolean deleted = file.delete();
+//            if (deleted) {
+//                log.info("Temporary file deleted: {}", file.getAbsolutePath());
+//            } else {
+//                log.warn("Failed to delete temporary file: {}", file.getAbsolutePath());
+//            }
+//        }
+//    }
 
-        try (PrintWriter pw = new PrintWriter(new FileWriter(fileName))) {
-            pw.write(header);
-
-            if(inactiveUsers!=null) {
-                for (String inactiveUser : inactiveUsers) {
-                    log.info(inactiveUser);
-                    pw.write(",,,remove,," + inactiveUser + ",\n");
-                }
-            }
-            pw.flush();
-        } catch (Exception e) {
-            log.error(LOG_CONTEXT, e);
-            throw e; // Rethrow exception to propagate so we don't mark records inactive that haven't been processed
-        }
-    }
-
-    private void sendCsvFile(String fileName) throws FtpErrorException, IOException {
-        FTPClient client = new FTPClient();
-        FileInputStream fis = null;
-
-        try {
-            client.connect(inactivateFtpConfig.getFtpHost());
-            if (client.isConnected()) {
-
-                if (client.login(inactivateFtpConfig.getFtpUsername(), inactivateFtpConfig.getFtpPassword())) {
-                    client.changeWorkingDirectory(inactivateFtpConfig.getFtpDirectory());
-                    client.enterLocalPassiveMode();
-                    fis = new FileInputStream(fileName);
-                    if (!client.storeFile(fileName, fis)) {
-                        throw new FtpErrorException("FTP Error: Could not store the file");
-                    }
-                    client.logout();
-                } else {
-                    client.logout();
-                    log.info("FTP Error: Could not login");
-                    throw new FtpErrorException("FTP Error: Could not login");
-                }
-
-            } else {
-                log.info("FTP Error: Could not connect to server");
-                throw new FtpErrorException("FTP Error: Could not connect to server");
-            }
-
-        } finally {
-                if (fis != null) {
-                    fis.close();
-                }
-
-                if (client.isConnected()) {
-                    client.disconnect();
-                }
-                }
-    }
-
-    private void sendCsvFileUsingSFTP(String fileName) throws FtpErrorException, IOException {
-        JSch jsch = new JSch();
-        Session session = null;
-        ChannelSftp sftpChannel = null;
-        FileInputStream fis = null;
-
-        try {
-            session = jsch.getSession(inactivateFtpConfig.getFtpUsername(), inactivateFtpConfig.getFtpHost(), 22);
-            session.setPassword(inactivateFtpConfig.getFtpPassword());
-            session.setConfig("StrictHostKeyChecking", "no");
-            session.setTimeout(30000);
-            session.connect();
-
-            sftpChannel = (ChannelSftp) session.openChannel("sftp");
-            sftpChannel.connect();
-            sftpChannel.cd(inactivateFtpConfig.getFtpDirectory());
-
-            fis = new FileInputStream(fileName);
-            sftpChannel.put(fis, fileName);
-
-        } catch (Exception e) {
-            log.error("SFTP Error: ", e);
-            throw new FtpErrorException("SFTP Error: " + e.getMessage());
-        } finally {
-            if (fis != null) {
-                fis.close();
-            }
-            if (sftpChannel != null) {
-                sftpChannel.disconnect();
-            }
-            if (session != null) {
-                session.disconnect();
-            }
-        }
-    }
-
-
+	public void deleteTempFile(File file) {
+		if (file != null && file.exists()) {
+			try {
+				Path filePath = file.toPath();
+				Files.delete(filePath);
+				log.info("Temporary file deleted: {}", filePath.toAbsolutePath());
+			} catch (IOException e) {
+				log.warn("Failed to delete temporary file: {}", file.getAbsolutePath(), e);
+			}
+		}
+	}
 
 }
