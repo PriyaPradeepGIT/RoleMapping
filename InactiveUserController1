@@ -1,0 +1,24 @@
+@RestController
+@Slf4j
+@RequestMapping("/users")
+public class InactiveUserController {
+
+    @Autowired
+    private InactiveUserRepository inactiveUserRepository;
+
+    @GetMapping("/inactiveList")
+    public List<String> fetchInactiveUsers() {
+        return inactiveUserRepository.findInactiveUserIds();
+    }
+
+    @Autowired
+    private InactivityFeedService inactivityFeedService;
+
+    @GetMapping("/createInactivityFeed")
+    public ResponseEntity<InactivateUsersResponse> createInactivityFeed() {
+        InactivateUsersResponse response = inactivityFeedService.createInactivityFeed();
+        log.info(response.toString());
+        return  ResponseEntity.ok().contentType(org.springframework.http.MediaType.APPLICATION_JSON).body(response);
+    }
+
+}
