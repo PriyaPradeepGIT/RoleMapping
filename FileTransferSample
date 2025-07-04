@@ -1,0 +1,173 @@
+reat! Below is a production-grade implementation of an SFTP file transfer using Spring Boot, where:
+
+Password-based authentication is used.
+
+Allow unknown keys is set to false (as it should be in production).
+
+Host key checking is enabled for secure SFTP connections.
+
+Temporary file creation is secured with permissions.
+
+The scheduler runs a job that creates and uploads a CSV file.
+
+ 1. Maven Dependencies
+<dependencies>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-integration</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.integration</groupId>
+        <artifactId>spring-integration-sftp</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>com.jcraft</groupId>
+        <artifactId>jsch</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter</artifactId>
+    </dependency>
+</dependencies>
+2. application.yml
+
+
+
+sftp:
+  host: sftp.example.com
+  port: 22
+  user: sftpuser
+  password: strong-password
+  remote-directory: /upload
+  local-directory: /tmp/sftp
+  known-hosts-path: classpath:sftp_known_hosts
+
+3.SftpProperties.java
+
+@Configuration
+@ConfigurationProperties(prefix = "sftp")
+@Data
+public class SftpProperties {
+    private String host;
+    private int port;
+    private String user;
+    private String password;
+    private String remoteDirectory;
+    private String localDirectory;
+    private String knownHostsPath;
+}
+4.4. SFTP Session Factory Configuration (Secure)
+
+@Configuration
+public class SftpConfig {
+
+    @Bean
+    public DefaultSftpSessionFactory sftpSessionFactory(SftpProperties properties) {
+        DefaultSftpSessionFactory factory = new DefaultSftpSessionFactory(true); // true = shared session
+        factory.setHost(properties.getHost());
+        factory.setPort(properties.getPort());
+        factory.setUser(properties.getUser());
+        factory.setPassword(properties.getPassword());
+        factory.setAllowUnknownKeys(false); // secure: do not allow unknown keys
+
+        // Set known_hosts file location (make sure it's present in your resources)
+        Resource knownHosts = new ClassPathResource("sftp_known_hosts");
+        factory.setKnownHostsResource(knownHosts);
+
+        return factory;
+    }
+}
+5.  File Transfer Service
+
+@Service
+@RequiredArgsConstructor
+public class SftpFileTransferService {
+
+    private final SftpProperties properties;
+    private final DefaultSftpSessionFactory sessionFactory;
+
+    public void sendFile(String filename, byte[] content) {
+        File localFile = new File(properties.getLocalDirectory(), filename);
+
+        try {
+            // Ensure secure permissions
+            Path path = localFile.toPath();
+            Files.createDirectories(path.getParent());
+
+            Files.write(path, content, StandardOpenOption.CREATE_NEW);
+
+            // Set permissions to rw------- (600)
+            Set<PosixFilePermission> perms = PosixFilePermissions.fromString("rw-------");
+            Files.setPosixFilePermissions(path, perms);
+
+            try (SftpSession session = sessionFactory.getSession()) {
+                session.write(Files.newInputStream(path), properties.getRemoteDirectory() + "/" + filename);
+            }
+
+        } catch (Exception e) {
+            // log error with logger
+            throw new RuntimeException("Failed to send file via SFTP", e);
+        } finally {
+            try {
+                Files.deleteIfExists(localFile.toPath());
+            } catch (IOException ignored) {
+            }
+        }
+    }
+}
+6.Scheduled CSV File Transfer
+
+@Component
+@RequiredArgsConstructor
+public class SftpScheduler {
+
+    private final SftpFileTransferService sftpService;
+
+    @Scheduled(cron = "0 0 * * * *") // Run hourly
+    public void uploadCsvFile() {
+        String filename = "data_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".csv";
+        String content = "id,name\n1,Priya\n2,John";
+
+        sftpService.sendFile(filename, content.getBytes(StandardCharsets.UTF_8));
+    }
+}
+Option 1: Secure — Manual known_hosts (Best for Production)
+Fetch with ssh-keyscan and verify manually:
+
+bash
+Copy
+Edit
+ssh-keyscan -H sftp.example.com > sftp_known_hosts
+Check the fingerprint matches what the SFTP server admin gave you.
+
+Use this in your Spring Boot resources/.
+
+✅ PROS: Secure, avoids MitM
+❌ CONS: Manual setup or devops script step
+
+Option 2: Automated Fetch + Manual Verify Once (CI/CD)
+Automate via shell script or CI/CD job:
+
+bash
+Copy
+Edit
+ssh-keyscan -H sftp.example.com > src/main/resources/sftp_known_hosts
+
+
+Recommended Automation Strategy for Production
+During deployment (CI/CD):
+
+Run ssh-keyscan -H sftp.example.com as a build step
+
+Save output to sftp_known_hosts
+
+Deploy that file with your app
+
+In Spring config:
+
+java
+Copy
+Edit
+factory.setAllowUnknownKeys(false);
+factory.setKnownHostsResource(new FileSystemResource("/app/config/sftp_known_hosts"));
+(Optional) Validate the fingerprint once to avoid blindly trusting unknown hosts.
