@@ -1,0 +1,154 @@
+Absolutely! Below is a **JUnit test setup** for the **SFTP CSV file transfer service** we discussed, with:
+
+* ✅ Dependency setup
+* ✅ Mocking SFTP using Mockito
+* ✅ Sample unit test cases for success and error scenarios
+* ✅ Tips to avoid real file transfers in test
+
+---
+
+## ✅ 1. Test Dependencies (Maven)
+
+Add these to your `pom.xml`:
+
+```xml
+<!-- JUnit 5 -->
+<dependency>
+  <groupId>org.junit.jupiter</groupId>
+  <artifactId>junit-jupiter</artifactId>
+  <version>5.10.0</version>
+  <scope>test</scope>
+</dependency>
+
+<!-- Mockito -->
+<dependency>
+  <groupId>org.mockito</groupId>
+  <artifactId>mockito-core</artifactId>
+  <version>5.12.0</version>
+  <scope>test</scope>
+</dependency>
+
+<!-- Spring Boot Test -->
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-test</artifactId>
+  <scope>test</scope>
+  <exclusions>
+    <exclusion>
+      <groupId>org.junit.vintage</groupId>
+      <artifactId>junit-vintage-engine</artifactId>
+    </exclusion>
+  </exclusions>
+</dependency>
+```
+
+---
+
+## ✅ 2. Mocking SFTP Session (Unit Test Setup)
+
+Here’s a test class for `SftpFileTransferService`:
+
+### 🔍 `SftpFileTransferServiceTest.java`
+
+```java
+@ExtendWith(MockitoExtension.class)
+class SftpFileTransferServiceTest {
+
+    @Mock
+    private DefaultSftpSessionFactory sessionFactory;
+
+    @Mock
+    private SftpSession sftpSession;
+
+    private SftpFileTransferService transferService;
+
+    private final SftpProperties props = new SftpProperties();
+
+    @BeforeEach
+    void setup() {
+        props.setLocalDirectory("target/test-sftp");
+        props.setRemoteDirectory("/remote/dir");
+        props.setUser("user");
+        props.setPassword("pass");
+        props.setHost("localhost");
+        props.setPort(22);
+
+        transferService = new SftpFileTransferService(props, sessionFactory);
+    }
+
+    @Test
+    void testSendFile_Success() throws Exception {
+        // Arrange
+        String fileName = "testfile.csv";
+        byte[] content = "id,name\n1,Priya".getBytes();
+
+        when(sessionFactory.getSession()).thenReturn(sftpSession);
+        doNothing().when(sftpSession).write(any(InputStream.class), anyString());
+
+        // Act
+        transferService.sendFile(fileName, content);
+
+        // Assert
+        verify(sftpSession, times(1)).write(any(InputStream.class), eq("/remote/dir/" + fileName));
+    }
+
+    @Test
+    void testSendFile_FailureDuringTransfer() throws Exception {
+        // Arrange
+        String fileName = "errorfile.csv";
+        byte[] content = "id,name\n2,Error".getBytes();
+
+        when(sessionFactory.getSession()).thenReturn(sftpSession);
+        doThrow(new IOException("SFTP error")).when(sftpSession).write(any(InputStream.class), anyString());
+
+        // Act & Assert
+        RuntimeException ex = assertThrows(RuntimeException.class,
+            () -> transferService.sendFile(fileName, content));
+
+        assertTrue(ex.getMessage().contains("Failed to send file via SFTP"));
+    }
+
+    @Test
+    void testSendFile_CleansUpTempFile() throws Exception {
+        String fileName = "tempfile.csv";
+        byte[] content = "id,name\n3,Temp".getBytes();
+
+        when(sessionFactory.getSession()).thenReturn(sftpSession);
+        doNothing().when(sftpSession).write(any(InputStream.class), anyString());
+
+        transferService.sendFile(fileName, content);
+
+        Path filePath = Paths.get(props.getLocalDirectory(), fileName);
+        assertFalse(Files.exists(filePath), "Temp file should be deleted");
+    }
+}
+```
+
+---
+
+## ✅ 3. Notes
+
+* We mock `DefaultSftpSessionFactory` and `SftpSession` to avoid real file uploads.
+* We write to a `target/test-sftp` temp directory during the test.
+* We check that the file is cleaned up afterward.
+* You can use `@TempDir` from JUnit 5 if you prefer auto-cleaned folders.
+
+---
+
+## ✅ 4. Test Cleanup (Optional)
+
+To make sure folders are cleaned up:
+
+```java
+@AfterEach
+void cleanup() throws IOException {
+    Files.walk(Paths.get(props.getLocalDirectory()))
+         .sorted(Comparator.reverseOrder())
+         .map(Path::toFile)
+         .forEach(File::delete);
+}
+```
+
+---
+
+Would you like to include **integration tests** that actually connect to a **real SFTP server** (maybe a local Docker SFTP for test), or is mocking enough for your project?
