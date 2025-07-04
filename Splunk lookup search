@@ -1,0 +1,78 @@
+To store and use a **lookup file** in Splunk (like your `claim_thresholds.csv`), follow these steps:
+
+---
+
+## 🔁 **Step-by-Step: Store and Use a CSV Lookup in Splunk**
+
+### ✅ 1. **Prepare the Lookup CSV File**
+
+Example: `claim_thresholds.csv`
+
+```csv
+service,threshold_percent
+dental,20
+vision,25
+medical,30
+```
+
+Save it locally on your machine.
+
+---
+
+### ✅ 2. **Upload Lookup File in Splunk**
+
+1. Go to **Splunk UI** > **Settings** > **Lookups**
+2. Under **Lookup table files**, click **Add new**
+3. Select your **App** (e.g., `Search & Reporting`)
+4. **Upload the CSV file** (`claim_thresholds.csv`)
+5. Give it a **Destination filename** (e.g., `claim_thresholds.csv`)
+6. Click **Save**
+
+---
+
+### ✅ 3. **Create a Lookup Definition**
+
+1. Now under **Lookups**, go to **Lookup definitions**
+2. Click **Add new**
+3. Choose the **App** where you uploaded the file
+4. **Name**: `claim_thresholds`
+5. **Type**: File-based
+6. Choose the uploaded file: `claim_thresholds.csv`
+7. Check the box for **"Use in search"**
+8. Save it
+
+---
+
+### ✅ 4. **Use the Lookup in Your SPL Query**
+
+Now you can use it like this:
+
+```spl
+index=claims sourcetype=claim_logs
+| bin _time span=5m
+| stats count as total_claims 
+        count(eval(claim_status="R")) as rejected_claims by _time, service
+| eval rejection_rate=round((rejected_claims/total_claims)*100, 2)
+| lookup claim_thresholds service OUTPUT threshold_percent
+| where rejection_rate > threshold_percent
+```
+
+---
+
+### 🔒 Security Tip (Production)
+
+* Only give write access to admins or automation accounts
+* Store large lookup data in KV Store if the table grows
+
+---
+
+### ⚠️ Troubleshooting
+
+| Issue                       | Fix                                                                        |
+| --------------------------- | -------------------------------------------------------------------------- |
+| `lookup table not found`    | Ensure it was uploaded in correct App (like `search`) and defined properly |
+| `threshold_percent` is null | Check if the `service` values match exactly (case-sensitive)               |
+
+---
+
+Would you like a sample dashboard XML to visualize this or to schedule the alert on this SPL?
