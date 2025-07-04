@@ -151,4 +151,21 @@ void cleanup() throws IOException {
 
 ---
 
+@Test
+void testTempFilePermissions() throws IOException {
+    String fileName = "secure.csv";
+    byte[] content = "id,name\n4,Secure".getBytes();
+
+    when(sessionFactory.getSession()).thenReturn(sftpSession);
+    doNothing().when(sftpSession).write(any(InputStream.class), anyString());
+
+    transferService.sendFile(fileName, content);
+
+    Path path = Paths.get(props.getLocalDirectory(), fileName);
+    assertFalse(Files.exists(path), "File should be deleted");
+
+    // Optional: Check permission before deletion (if needed)
+}
+
+
 Would you like to include **integration tests** that actually connect to a **real SFTP server** (maybe a local Docker SFTP for test), or is mocking enough for your project?
