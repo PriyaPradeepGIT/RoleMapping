@@ -1,0 +1,139 @@
+Absolutely! Let's refine and **merge your query** with all the best practices we've discussed, including:
+
+* **5-minute rolling window**
+* **rejection rate logic**
+* **lookup thresholds (`EnvRejLimit`, `EnvVolMin`)**
+* Use of `instanceId` as environment
+* Clean output
+
+---
+
+### ✅ Final Splunk SPL Query (Optimized with Best Practices)
+
+```spl
+index=cloud_rx_pbm_cloud_claim agg="*stg*" "*Transaction-Summary*" earliest=-5m
+| rex field=data.message "Transaction-Summary: (?<tx_json>\{.*?\})"
+| spath input=tx_json
+| eval environment=instanceId
+| stats count as total_claims, 
+        sum(eval(transactionResponseStatus in ("A","R","D"))) as rejections 
+        by environment
+| eval rejectionRate = round((rejections / total_claims) * 100, 2)
+| lookup ExcessiveRejectionThresholds.csv Environment as environment OUTPUT EnvRejLimit, EnvVolMin
+| where total_claims >= EnvVolMin AND rejectionRate >= EnvRejLimit
+| table environment, rejectionRate, rejections, total_claims, EnvRejLimit, EnvVolMin
+```
+
+---
+
+### 🔍 Key Enhancements Explained:
+
+| Part                          | Purpose                                                     |
+| ----------------------------- | ----------------------------------------------------------- |
+| `earliest=-5m`                | Ensures we're searching only the **last 5 minutes** of data |
+| `rex` + `spath`               | Extracts the JSON from log messages for transaction fields  |
+| `eval environment=instanceId` | Aligns your field with the lookup key                       |
+| `stats`                       | Counts total claims and relevant rejections                 |
+| `eval rejectionRate`          | Calculates rejection % (rounded to 2 decimal places)        |
+| `lookup`                      | Brings in thresholds for each environment from your CSV     |
+| `where`                       | Enforces **volume minimum + rejection threshold**           |
+| `table`                       | Clean output for alerting/reporting                         |
+
+---
+
+### 🕒 To Schedule This Alert:
+
+1. **Time Range**: Last 5 minutes
+2. **Run Frequency**: Every 5 minutes
+3. **Trigger Condition**:
+   `Number of results > 0`
+4. **Action**: Email, Slack, Teams, or alerting system
+
+---
+
+Let me know if you'd like:
+
+* A **mock CSV threshold** file
+* A version that includes **timezone filtering**
+* Or if you're piping this to a **Notable Event** or ticketing system
+
+Happy to help!
+Great question — and a common Splunk admin pain point! Let's walk through **why your uploaded CSV lookup file isn't visible to others**, **even though you set app-level permissions**.
+
+---
+
+### 🔍 1. **You uploaded the lookup file, but others can't see it?**
+
+You're likely experiencing this because of one of these issues:
+
+---
+
+## ✅ Troubleshooting Checklist
+
+### ✅ A. **Lookup file permission is set correctly?**
+
+1. Go to **Settings → Lookups → Lookup table files**
+2. Find your file (e.g., `ExcessiveRejectionThresholds.csv`)
+3. Click **Permissions**
+4. Make sure:
+
+   * **App** is selected (not just Private)
+   * **Read** access is given to **Everyone**
+   * (Optional) Write access to Admins only
+
+✅ **Why it matters**: Even within an app, permissions can restrict others from seeing or using the file.
+
+---
+
+### ✅ B. **The lookup definition is also shared?**
+
+Uploading the file isn’t enough — you also need to **create a lookup definition** and share that too.
+
+> A **lookup definition** tells Splunk how to use that file in SPL (e.g., for `| lookup` commands).
+
+**Steps:**
+
+1. Go to **Settings → Lookups → Lookup definitions**
+2. Click **New Lookup Definition**
+3. Choose your App (e.g., `search`)
+4. Choose the filename (e.g., `ExcessiveRejectionThresholds.csv`)
+5. Give it a name (e.g., `excessive_rejection_thresholds`)
+6. Save and **set Permissions** to App-level
+
+---
+
+### ✅ C. **Are users running searches in the *same app* context?**
+
+If you uploaded the lookup in the `Search` app, but someone else is using a custom app (e.g., `claims_monitoring`), they won’t see it **unless:**
+
+* The lookup is **globally shared**, **or**
+* The **lookup file is duplicated in their app**
+
+✅ **Best fix**: Use the **Search app** or ensure the **lookup is shared across apps** (requires admin rights).
+
+---
+
+## 🧪 Quick SPL Test
+
+From another user account, ask them to try:
+
+```spl
+| inputlookup ExcessiveRejectionThresholds.csv
+```
+
+* If it works: the permissions are good ✅
+* If it errors out: **permissions or app sharing issue** ❌
+
+---
+
+## 🛠️ Summary Fix Steps
+
+1. ✅ Share **lookup file** at App level (or Global if needed)
+2. ✅ Share **lookup definition** at App level
+3. ✅ Ensure users are working in the same App context
+4. ✅ Use `| inputlookup` to verify access
+5. ❌ Don't use **Private** sharing unless you're testing alone
+
+---
+
+Let me know if you want CLI (`.conf` file) instructions to fix this permanently via `transforms.conf` and `authorize.conf`!
