@@ -1,0 +1,118 @@
+Absolutely! Let's walk through this Splunk query step by step in a clear and simple way. This query is designed to monitor claim rejections and compare them to thresholds defined in a lookup file.
+________________________________________
+🔍 Full Query (cleaned up for readability):
+index=cloud_rx_pbm_cloud_claim agg="*stg*" "*Transaction-Summary*" 
+| rex field=data.message "Transaction-Summary: (?<tx_json>\{.*?\})"
+| spath input=tx_json
+| eval environment=instanceId
+| stats count as total_claims, sum(eval(transactionResponseStatus in ("A","R","D"))) as rejections by environment
+| eval rejectionRate = round((rejections / total_claims) * 100, 2)
+| lookup ExcessiveRejectionThresholds.csv Environment as environment OUTPUT EnvRejLimit, EnvVolMin
+| where rejectionRate > EnvRejLimit AND total_claims > EnvVolMin
+| table environment, rejectionRate, rejections, total_claims, EnvRejLimit, EnvVolMin________________________________________
+🧩 Step-by-Step Explanation
+1. Search the Logs
+index=cloud_rx_pbm_cloud_claim agg="*stg*" "*Transaction-Summary*"
+•	Looks in the cloud_rx_pbm_cloud_claim index.
+•	Filters logs that contain "stg" and "Transaction-Summary" in the agg field.
+________________________________________
+2. Extract JSON from Message
+| rex field=data.message "Transaction-Summary: (?<tx_json>\{.*?\})"
+•	Uses a regular expression to extract the JSON part after "Transaction-Summary:" from the data.message field.
+•	Stores it in a new field called tx_json.
+________________________________________
+3. Parse the JSON
+| spath input=tx_json
+•	Opens up the JSON so Splunk can access its fields like transactionResponseStatus, transactionCode, etc.
+________________________________________
+4. Create Environment Field
+| eval environment=transactionCode
+•	Creates a new field called environment using the value from transactionCode.
+•	This is used to match against the lookup table.
+________________________________________
+5. Count Claims and Rejections
+| stats count as total_claims, sum(eval(transactionResponseStatus="R")) as rejections by environment
+•	Groups data by environment.
+•	Counts total claims.
+•	Counts how many claims were rejected (transactionResponseStatus = "R").
+________________________________________
+6. Calculate Rejection Rate
+| eval rejectionRate = round((rejections / total_claims) * 100, 2)
+•	Calculates the percentage of rejected claims.
+•	Rounds it to 2 decimal places.
+________________________________________
+7. Use Lookup Table for Thresholds
+| lookup env_thresholds.csv Environment as environment OUTPUT EnvRejLimit, EnvVolMin
+•	Looks up the environment in a CSV file called env_thresholds.csv.
+•	Pulls in the rejection limit (EnvRejLimit) and volume minimum (EnvVolMin) for that environment.
+________________________________________
+8. Filter Based on Thresholds
+| where rejectionRate > EnvRejLimit AND total_claims > EnvVolMin
+•	Keeps only the rows where:
+o	The rejection rate is higher than allowed.
+o	The number of claims is above the minimum volume.
+________________________________________
+9. Display Final Table
+| table environment, rejectionRate, rejections, total_claims, EnvRejLimit, EnvVolMin
+•	Shows a clean table with all the important fields.
+________________________________________
+✅ What This Query Helps You Do
+It helps you detect environments where:
+•	Too many claims are being rejected.
+•	The volume of claims is high enough to be significant.
+•	And it does this automatically using a lookup table for thresholds.
+________________________________________
+Would you like help setting up the env_thresholds.csv file or turning this into a scheduled alert in Splunk?
+index=cloud_rx_pbm_cloud_claim agg="*stg*" "*Transaction-Summary*" 
+| rex field=data.message "Transaction-Summary: (?<tx_json>\{.*?\})"
+| spath input=tx_json
+| eval environment=instanceId
+| stats count as total_claims, sum(eval(transactionResponseStatus in ("A","R","D"))) as rejections by environment
+| eval rejectionRate = round((rejections / total_claims) * 100, 2)
+| eval sysEnv=case(
+    like(environment, "%BK1%"), "BK1",
+    like(environment, "%BK2%"), "BK2",
+    like(environment, "%OMC%") OR like(environment, "%ASP-PRD%") OR like(environment, "%RST%") OR like(environment, "%CL1%"), "CL1",
+    like(environment, "%HHS%") OR like(environment, "%IRX-PRD%") OR like(environment, "%SNY%") OR like(environment, "%CL2%"), "CL2",
+    like(environment, "%CTR%") OR like(environment, "%KSR%") OR like(environment, "%CL3%"), "CL3",
+    like(environment, "%AZM%") OR like(environment, "%GAM%") OR like(environment, "%INM%") OR like(environment, "%PMC%") OR 
+    like(environment,"%SDM%" )OR like(environment,"%TNM%" )OR 
+    like(environment,"%VAH%" )OR  like(environment,"%UTM%" )OR 
+    like(environment,"%CL4%" ),"CL4"
+)
+| lookup ExcessiveRejections SysEnvironment as sysEnv OUTPUT EnvRejLimit EnvVolMin
+| where rejectionRate > EnvRejLimit AND total_claims > EnvVolMin
+| table environment sysEnv rejectionRate rejections total_claims EnvRejLimit EnvVolMin
+
+
+Ensure that our excessive rejection alerts are using this same information:
+response status segment
+ 
+We use the below table for claim reject rate thresholds.  EnvRejLimit is the threshold used to trigger the alert for the given environment provided the volume is above the EnvVolMin threshold.
+EnvRejLimit is the percentage
+EnvVolMin is time where 500 = 5 min, 200 = 2 min and 10 = ~6 sec
+ 
+SysEnvironment	Environment	EnvRejLimit	EnvVolMin	EnvTZ
+BK1	BK1	55	500	PST
+BK2	BK2	55	500	PST
+CL1	OMC	55	500	CST
+CL1	ASP-PRD	90	500	CST
+CL1	RST	60	500	CST
+CL2	HHS	100	10	CST
+CL2	IRX-PRD	55	500	CST
+CL2	SNY	100	500	CST
+CL3	CTR	55	200	CST
+CL3	KSR	55	200	CST
+CL4	AZM	55	500	CST
+CL4	GAM	75	500	CST
+CL4	INM	99	500	CST
+CL4	PMC	60	500	CST
+CL4	SDM	60	500	CST
+CL4	TNM	60	500	CST
+CL4	VAH	55	500	CST
+CL4	UTM	100	500	CST
+ 
+They also had this information - need to talk to Marcus about what this means. It might be a separate story:
+ 
+We also have comm alerts and those are triggered by more than 40 RXC022* or more than 1000 RXC* errors in a 5 minute period
+
